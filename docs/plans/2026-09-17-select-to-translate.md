@@ -1336,7 +1336,7 @@ QtObject {
   // asynchronous otherwise. blockWrites makes it return once the write has
   // landed or failed.
   property FileView file: FileView {
-    path: root.dirsReady ? root.configPath : ""
+    path: root.configPath
     printErrors: false
     atomicWrites: true
     blockWrites: true
@@ -1354,6 +1354,13 @@ QtObject {
     onLoadFailed: {
       // No file yet is the first run, not an error: seed from chat and write
       // it out so the next run takes the normal path.
+      //
+      // Not while the directory is still missing, though. A load attempted
+      // before mkdir exits fails for that reason alone, and seeding there would
+      // mark the config loaded — and write the defaults over a config the real
+      // read has not reached yet. mkdir's onExited reloads instead.
+      if (!root.dirsReady)
+        return
       root.config = root.seedFromChat()
       root.configLoaded = true
       root.save()
@@ -1365,6 +1372,11 @@ QtObject {
   property FileView chatFile: FileView {
     path: root.chatConfigPath
     printErrors: false
+    // seedFromChat() reads text() once, and nothing else orders that read
+    // against this file's own load. blockLoading makes it land — or fail —
+    // before returning, instead of handing back an empty string that would
+    // persist the defaults over the user's real credentials.
+    blockLoading: true
   }
 
   // umask 077 rather than `mkdir -m 700`: the mode flag covers only the
@@ -1379,6 +1391,10 @@ QtObject {
     onExited: function (exitCode) {
       if (exitCode === 0) {
         root.dirsReady = true
+        // Only now is a read meaningful: the load attempted at construction
+        // either failed for want of the directory or raced the file this run is
+        // about to write. This is the read whose result counts.
+        root.file.reload()
       } else {
         root.lastError = "Cannot create " + root.dir
       }
@@ -1409,8 +1425,19 @@ Expected: `config.json` 存在，权限 `-rw-------`（0600）。目录权限 `d
 
 - [ ] **Step 4: 验证导入的内容**
 
-Run: `jq '{baseUrl, model, apiKey: (.apiKey | length)}' ~/.local/state/omarchy/translate/config.json`
-Expected: `baseUrl` 与 `model` 与 `~/.local/state/omarchy/chat/config.json` 一致；`apiKey` 是**长度**而非明文。若 chat 配置不存在，则应看到默认值。
+Run:
+
+```bash
+jq -r '.apiKey | length' ~/.local/state/omarchy/chat/config.json
+jq -r '.apiKey | length' ~/.local/state/omarchy/translate/config.json
+```
+
+Expected: 两个长度**相等**（本机 chat 配置的 `apiKey` 长度是 35）。
+
+> **不要用 `baseUrl`/`model` 判断首次导入是否成功（R34）**：本机 chat 这两个值恰好与插件默认值
+> 完全相同，所以「导入成功」和「静默退回默认值」在这两个字段上长得一模一样。`apiKey` 的长度是
+> 唯一能区分的信号：chat 存在而 translate 的长度为 0，就是 F4（首次导入读到未加载的 FileView）
+> 真的发生了。
 
 - [ ] **Step 5: 验证二次运行不覆盖**
 
