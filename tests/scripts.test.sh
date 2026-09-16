@@ -46,8 +46,16 @@ check "cursor-pos emits five fields" "$(printf '%s' "$out" | awk '{print NF}')" 
 # than a hard-coded value so the test survives a resolution change.
 mon="$(hyprctl -j monitors | jq -c --arg n "$(printf '%s' "$out" | awk '{print $1}')" '.[] | select(.name==$n)')"
 check_match "cursor-pos names a real monitor" "$mon" '^\{'
-check "reported width matches hyprctl" "$(printf '%s' "$out" | awk '{print $4}')" "$(printf '%s' "$mon" | jq -r '.width')"
-check "reported height matches hyprctl" "$(printf '%s' "$out" | awk '{print $5}')" "$(printf '%s' "$mon" | jq -r '.height')"
+# Compared against the LOGICAL extent, not hyprctl's raw width: raw width is
+# physical, and the script reports width/scale by design. Comparing to the raw
+# value passes only where scale is 1, and would tempt a future red run into
+# "fixing" correct code.
+check "reported width is the logical width" \
+  "$(printf '%s' "$out" | awk '{print $4}')" \
+  "$(printf '%s' "$mon" | jq -r '((.width / .scale) | floor)')"
+check "reported height is the logical height" \
+  "$(printf '%s' "$out" | awk '{print $5}')" \
+  "$(printf '%s' "$mon" | jq -r '((.height / .scale) | floor)')"
 
 lx="$(printf '%s' "$out" | awk '{print $2}')"
 ly="$(printf '%s' "$out" | awk '{print $3}')"
@@ -106,6 +114,27 @@ check "scaled layout: the boundary stays on the left screen" \
   "$(scaled 1919 0)" "DP-1 1919 0 1920 1080"
 check "scaled layout: the boundary flips to the right screen" \
   "$(scaled 1920 0)" "HDMI-A-1 0 0 1920 1080"
+
+# A rotated panel: mode 1920x1080 at transform 1 presents a LOGICAL 1080x1920
+# rectangle. Containment has to use that swapped extent. Testing the unswapped
+# numbers makes the monitor match nothing at all — the script exits 1 with
+# empty output even though the cursor is plainly sitting on it, and the feature
+# disappears entirely on any portrait display.
+PORTRAIT='[{"name":"eDP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1,"transform":1}]'
+
+onPortrait() { # onPortrait <cursor-x> <cursor-y>
+  STUB_MONITORS="$PORTRAIT" STUB_CURSOR="$1, $2" HYPRCTL="$stub/hyprctl" "$ROOT/bin/cursor-pos"
+}
+
+check "rotated layout: finds the monitor the cursor is on" \
+  "$(onPortrait 500 1500)" "eDP-1 500 1500 1080 1920"
+check "rotated layout: reports the swapped logical extents" \
+  "$(onPortrait 1079 1919)" "eDP-1 1079 1919 1080 1920"
+# The same point lies outside the rotated rectangle, so there is no match and
+# the script must fail rather than emit a plausible-looking line.
+STUB_MONITORS="$PORTRAIT" STUB_CURSOR="1500, 500" HYPRCTL="$stub/hyprctl" \
+  "$ROOT/bin/cursor-pos" >/dev/null 2>&1
+check "rotated layout: a point off the rotated monitor fails" "$?" "1"
 
 rm -rf "$stub"
 
