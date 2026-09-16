@@ -82,7 +82,7 @@ QtObject {
   // asynchronous otherwise. blockWrites makes it return once the write has
   // landed or failed.
   property FileView file: FileView {
-    path: root.dirsReady ? root.configPath : ""
+    path: root.configPath
     printErrors: false
     atomicWrites: true
     blockWrites: true
@@ -100,6 +100,13 @@ QtObject {
     onLoadFailed: {
       // No file yet is the first run, not an error: seed from chat and write
       // it out so the next run takes the normal path.
+      //
+      // Not while the directory is still missing, though. A load attempted
+      // before mkdir exits fails for that reason alone, and seeding there would
+      // mark the config loaded — and write the defaults over a config the real
+      // read has not reached yet. mkdir's onExited reloads instead.
+      if (!root.dirsReady)
+        return
       root.config = root.seedFromChat()
       root.configLoaded = true
       root.save()
@@ -111,6 +118,11 @@ QtObject {
   property FileView chatFile: FileView {
     path: root.chatConfigPath
     printErrors: false
+    // seedFromChat() reads text() once, and nothing else orders that read
+    // against this file's own load. blockLoading makes it land — or fail —
+    // before returning, instead of handing back an empty string that would
+    // persist the defaults over the user's real credentials.
+    blockLoading: true
   }
 
   // umask 077 rather than `mkdir -m 700`: the mode flag covers only the
@@ -125,6 +137,10 @@ QtObject {
     onExited: function (exitCode) {
       if (exitCode === 0) {
         root.dirsReady = true
+        // Only now is a read meaningful: the load attempted at construction
+        // either failed for want of the directory or raced the file this run is
+        // about to write. This is the read whose result counts.
+        root.file.reload()
       } else {
         root.lastError = "Cannot create " + root.dir
       }
