@@ -346,7 +346,7 @@ report()
 - [ ] **Step 3: 跑测试确认失败**
 
 Run: `node tests/layout.test.js`
-Expected: FAIL —— `Cannot find module` 或 `Layout.place is not a function`（`Layout.js` 还不存在）
+Expected: FAIL —— 测试运行器用 `fs.readFileSync` 读被测文件，所以 `Layout.js` 不存在时失败形态是 `run.js` 抛出的**未捕获 `ENOENT`**（退出码 1，一条断言都没跑），**不是** `Cannot find module`。（已实测确认。）
 
 - [ ] **Step 4: 写实现**
 
@@ -509,7 +509,7 @@ report()
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `node tests/translate.test.js`
-Expected: FAIL —— `Cannot find module .../Translate.js`
+Expected: FAIL —— 未捕获的 `ENOENT`（`tests/run.js` 用 `fs.readFileSync` 读被测文件，见 Task 2 同名步骤的说明），退出码 1，一条断言都没跑。**不是** `Cannot find module`。
 
 - [ ] **Step 3: 写实现**
 
