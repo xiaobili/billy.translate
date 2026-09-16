@@ -319,10 +319,12 @@ check("clamps to the right edge",
   Layout.place({ x: 2550, y: 400 }, SCREEN, CARD, GAP, EDGE),
   { x: 2132, y: 412 })
 
-// Top-left corner: the gap would push it under the safe edge.
-check("clamps to the top-left safe corner",
+// Cursor at the origin. The gap alone (12) already clears the edge floor (8),
+// so the card lands at the gap offset and the edge clamp never fires. (This
+// case originally expected {8,8}; that expectation was wrong, not the code.)
+check("a cursor at the origin lands at the gap offset",
   Layout.place({ x: 0, y: 0 }, SCREEN, CARD, GAP, EDGE),
-  { x: 8, y: 8 })
+  { x: 12, y: 12 })
 
 // A card taller than the screen cannot fit either way; the top edge is the
 // only position that stays reachable.
@@ -330,10 +332,13 @@ check("clamps a card taller than the screen",
   Layout.place({ x: 800, y: 600 }, { w: 2560, h: 400 }, { w: 420, h: 900 }, GAP, EDGE),
   { x: 812, y: 8 })
 
-// Bottom-right corner: both axes clamp at once.
-check("clamps both axes at the bottom-right corner",
+// Bottom-right corner: x clamps to the right margin, and y flips above the
+// cursor. That flip is already legal (card bottom 1068 <= 1080 - 8), so the
+// second clamp does not fire — only one axis clamps. (This case originally
+// expected {2132,8}; that expectation was wrong, not the code.)
+check("clamps to the right margin and flips above near the bottom",
   Layout.place({ x: 2560, y: 1080 }, SCREEN, CARD, GAP, EDGE),
-  { x: 2132, y: 8 })
+  { x: 2132, y: 868 })
 
 report()
 ```
