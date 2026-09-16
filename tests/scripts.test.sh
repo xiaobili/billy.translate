@@ -67,6 +67,48 @@ check "local x reconstructs the global position" \
 check "local y reconstructs the global position" \
   "$(awk -v l="$ly" -v s="$scale" -v o="$oy" 'BEGIN{printf "%d", l*s + o}')" "$gy"
 
+# ---------------------------------------------- cursor-pos, scaled monitors
+# Everything above runs against this machine, where a single scale-1 screen
+# makes every coordinate space collapse onto the same numbers -- which is
+# exactly why a conversion that confuses those spaces passes all of it. The
+# stub below is a layout where the spaces differ: a scale-2 screen whose 3840
+# physical columns are only 1920 logical ones, sitting left of a scale-1 one.
+#
+# Because hyprctl reports width/height in physical mode pixels but x/y in the
+# logical layout space, a conversion that compares the logical cursor against
+# physical extents picks the wrong screen here, and one that divides the
+# already-logical cursor by the scale reports the wrong local coordinates.
+stubdir="$(mktemp -d)"
+trap 'rm -rf "$stubdir"' EXIT
+cat > "$stubdir/hyprctl" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  cursorpos) printf '%s\n' "$STUB_CURSOR" ;;
+  -j)        printf '%s\n' "$STUB_MONITORS" ;;
+  *)         exit 1 ;;
+esac
+STUB
+chmod +x "$stubdir/hyprctl"
+
+STUB_MONITORS='[
+  {"name": "DP-1",     "x": 0,    "y": 0, "width": 3840, "height": 2160, "scale": 2, "transform": 0},
+  {"name": "HDMI-A-1", "x": 1920, "y": 0, "width": 1920, "height": 1080, "scale": 1, "transform": 0}
+]'
+
+pos() { # pos <global cursor> -> the script's line, under the stub layout
+  STUB_CURSOR="$1" STUB_MONITORS="$STUB_MONITORS" \
+    HYPRCTL="$stubdir/hyprctl" "$ROOT/bin/cursor-pos"
+}
+
+check "scaled layout: cursor at 2500 is on the second screen, not the first" \
+  "$(pos '2500, 500')" "HDMI-A-1 580 500 1920 1080"
+check "scaled layout: scale-2 screen reports logical size and logical coords" \
+  "$(pos '900, 400')" "DP-1 900 400 1920 1080"
+check "scaled layout: the boundary column stays on the left screen" \
+  "$(pos '1919, 0')" "DP-1 1919 0 1920 1080"
+check "scaled layout: the next column starts the right screen" \
+  "$(pos '1920, 0')" "HDMI-A-1 0 0 1920 1080"
+
 echo
 echo "$((checks - failures))/$checks passed"
 [ "$failures" -eq 0 ]

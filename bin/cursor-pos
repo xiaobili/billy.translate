@@ -9,9 +9,24 @@
 # a layer surface is positioned in its own screen's *logical* local
 # coordinates. The conversion needs the monitor list and the scale factor, and
 # doing it here keeps that arithmetic out of QML and testable from a terminal.
+#
+# The coordinate spaces are the whole trap here, because the field names do not
+# say which is which and at scale 1 every space collapses onto one number:
+#   * `hyprctl -j monitors` reports width/height in *physical* mode pixels, but
+#     x/y in the *logical* layout space. A 3840-wide screen at scale 2 occupies
+#     1920 logical columns, so its logical extent is width/scale -- test a
+#     logical cursor against a physical extent and the wrong screen wins.
+#   * `hyprctl cursorpos` is logical like x/y, so the local coordinate is a
+#     plain subtraction from the monitor origin. The scale is already in both
+#     terms; dividing again halves a scale-2 position.
 set -uo pipefail
 
-cursor="$(hyprctl cursorpos 2>/dev/null)" || exit 1
+# Overridable so tests/scripts.test.sh can drive the conversion with a stub --
+# on this machine's single scale-1 screen a wrong conversion is invisible.
+# Same shape as QMLLINT in tools/check-syntax.sh.
+HYPRCTL="${HYPRCTL:-hyprctl}"
+
+cursor="$("$HYPRCTL" cursorpos 2>/dev/null)" || exit 1
 # "1551, 1003"
 gx="${cursor%%,*}"
 gy="${cursor##*,}"
@@ -19,30 +34,31 @@ gx="${gx//[!0-9-]/}"
 gy="${gy//[!0-9-]/}"
 [ -n "$gx" ] && [ -n "$gy" ] || exit 1
 
-monitors="$(hyprctl -j monitors 2>/dev/null)" || exit 1
+monitors="$("$HYPRCTL" -j monitors 2>/dev/null)" || exit 1
 [ -n "$monitors" ] || exit 1
 
-# The monitor whose rectangle contains the cursor. Hyprland reports a monitor
-# covering the cursor even when the cursor sits on a gap between screens, so a
-# plain containment test is enough. No match at all is a failure, not an empty
-# success — the caller cannot act on a blank line.
+# The monitor whose rectangle contains the cursor. Extent against extent: the
+# cursor is logical, so the extent it is tested against has to be logical too.
+# Hyprland reports a monitor covering the cursor even when the cursor sits on
+# a gap between screens, so a plain containment test is enough. No match at all
+# is a failure, not an empty success — the caller cannot act on a blank line.
 line="$(printf '%s' "$monitors" | jq -r --argjson x "$gx" --argjson y "$gy" '
   [ .[]
-    | select($x >= .x and $x < (.x + .width) and $y >= .y and $y < (.y + .height))
+    | select($x >= .x and $x < (.x + (.width / .scale)) and $y >= .y and $y < (.y + (.height / .scale)))
   ]
   | .[0]
   | if . == null then empty
     else
-      # scale converts global device pixels into the surface logical pixels;
-      # transform 1/3/5/7 swap the axes, so the local extent has to follow the
-      # rotation rather than the raw width/height.
+      # The logical extent, not the physical one: divide the mode size by the
+      # scale, and for transform 1/3/5/7 swap the axes so the extent follows
+      # the rotation rather than the raw width/height.
       (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
          then (.height / .scale) else (.width / .scale) end) as $w
       | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
          then (.width / .scale) else (.height / .scale) end) as $h
       | [ .name,
-          ((($x - .x) / .scale) | floor),
-          ((($y - .y) / .scale) | floor),
+          ((($x - .x)) | floor),
+          ((($y - .y)) | floor),
           ($w | floor),
           ($h | floor) ]
       | @tsv
