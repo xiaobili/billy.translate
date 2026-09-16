@@ -1,6 +1,6 @@
 # Translate (billy.translate)
 
-Select text anywhere, press `SUPER + CTRL + T`, read the translation in a
+Select text anywhere, press `SUPER + CTRL + U`, read the translation in a
 bubble at the cursor. Translations stream in, and the bubble copies with one
 click.
 
@@ -19,15 +19,15 @@ Third-party plugins are not enabled by default. The id has to be in
 
 | Key | Action |
 |---|---|
-| `SUPER + CTRL + T` | Translate the selection; press again to dismiss |
-| `SUPER + CTRL + SHIFT + T` | Copy the current translation |
+| `SUPER + CTRL + U` | Translate the selection; press again to dismiss |
+| `SUPER + CTRL + SHIFT + U` | Copy the current translation |
 | `Esc`, or click outside | Dismiss |
 
 Bind them in `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + CTRL + T", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
-o.bind("SUPER + CTRL + SHIFT + T", "Copy translation", "omarchy-shell billy.translate copy")
+o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
 ```
 
 ## Configuration
@@ -77,7 +77,13 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 ```
 
 Covers QML syntax (`qmllint`'s `[syntax]` class only), the pure functions in
-`Layout.js` and `Translate.js`, and both `bin/` scripts. The QML layer has no
+`Layout.js` and `Translate.js`, both `bin/` scripts, and one static assertion on
+`Transport.qml`. The QML layer has no
 harness — after any QML edit, restart the shell rather than trusting a
 hot-reload, because a plugin that fails to compile keeps reporting the stale
 error and the stale line number.
+
+The entry point is not inert: the `bin/` section drives the real clipboard, and
+`pick-text`'s fallback case synthesises a `Ctrl+C` into whichever window has
+focus. Run it from a terminal you can afford to have interrupted — it saves and
+restores your selections around the run.

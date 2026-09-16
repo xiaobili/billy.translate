@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在 Omarchy 桌面选中文本后按 `SUPER + CTRL + T`，在光标位置的气泡里看到流式译文，并可一键复制。
+**Goal:** 在 Omarchy 桌面选中文本后按 `SUPER + CTRL + U`，在光标位置的气泡里看到流式译文，并可一键复制。
 
 **Architecture:** 一个第三方 overlay 插件。取词与光标定位两种「有状态、有超时」的时序逻辑交给 `bin/` 下的两个 shell 脚本，QML 侧只读它们的 stdout；从脚本里拿到的光标与屏幕数据经 `Layout.js` 的纯几何函数算出气泡坐标；翻译请求沿用 `billy.chat` 已验证的 curl 流式方案（API key 走 0600 配置文件，不进 argv）。
 
@@ -197,7 +197,7 @@ exit "$status"
 ```markdown
 # Translate (billy.translate)
 
-Select text anywhere, press `SUPER + CTRL + T`, read the translation in a
+Select text anywhere, press `SUPER + CTRL + U`, read the translation in a
 bubble at the cursor.
 
 Full documentation is written in Task 10 of the implementation plan.
@@ -1930,7 +1930,7 @@ Expected: `qml syntax ok`
 
 ```bash
 omarchy restart shell && sleep 3
-# 选中 "The quick brown fox jumps over the lazy dog"，按 SUPER+CTRL+T
+# 选中 "The quick brown fox jumps over the lazy dog"，按 SUPER+CTRL+U
 journalctl --user --since "1 min ago" | grep -iE 'translate|error' | tail -20
 ```
 
@@ -2392,13 +2392,13 @@ Expected: 无 `failed` / `Expected token` / `is not a type`。
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | 在 GTK 应用选中英文，按 `SUPER+CTRL+T` | 气泡出现在光标右下，方向标签 `→ 中文`，译文流式增长 |
+| 1 | 在 GTK 应用选中英文，按 `SUPER+CTRL+U` | 气泡出现在光标右下，方向标签 `→ 中文`，译文流式增长 |
 | 2 | 同上但选中文 | 标签 `中文 → EN`，译文是英文 |
 | 3 | 在屏幕最底部划词 | 气泡翻到光标**上方**，不越出底边 |
 | 4 | 在屏幕最右侧划词 | 气泡被夹在右边界内 |
 | 5 | 长文（几百字） | 气泡长到封顶后不再变高，译文不越出屏幕 |
 | 6 | 按 `Esc` | 关闭 |
-| 7 | 再按 `SUPER+CTRL+T` | 打开 |
+| 7 | 再按 `SUPER+CTRL+U` | 打开 |
 | 8 | 点击气泡外的暗区 | 关闭 |
 | 9 | 点复制按钮 | 图标变 `✓`，`wl-paste` 得到译文 |
 | 10 | `omarchy-shell billy.translate copy` | 同样复制译文 |
@@ -2440,7 +2440,9 @@ synthetic Ctrl+C grabs the wrong thing, that is how you see it."
 
 ```bash
 #!/usr/bin/env bash
-# Everything that can be checked without starting the shell.
+# Everything that can be checked without starting the shell — but not inert: the
+# bin/ section drives the real clipboard and synthesises a Ctrl+C into the focused
+# window, so run it from a terminal you can afford to have interrupted.
 #
 # The QML layer is not covered here: there is no harness for it, and a plugin
 # that fails to compile stays broken through hot-reload, so a restart is the
@@ -2491,7 +2493,7 @@ Expected: 三段全过，退出码 0
 ````markdown
 # Translate (billy.translate)
 
-Select text anywhere, press `SUPER + CTRL + T`, read the translation in a
+Select text anywhere, press `SUPER + CTRL + U`, read the translation in a
 bubble at the cursor. Translations stream in, and the bubble copies with one
 click.
 
@@ -2510,15 +2512,15 @@ Third-party plugins are not enabled by default. The id has to be in
 
 | Key | Action |
 |---|---|
-| `SUPER + CTRL + T` | Translate the selection; press again to dismiss |
-| `SUPER + CTRL + SHIFT + T` | Copy the current translation |
+| `SUPER + CTRL + U` | Translate the selection; press again to dismiss |
+| `SUPER + CTRL + SHIFT + U` | Copy the current translation |
 | `Esc`, or click outside | Dismiss |
 
 Bind them in `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + CTRL + T", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
-o.bind("SUPER + CTRL + SHIFT + T", "Copy translation", "omarchy-shell billy.translate copy")
+o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
 ```
 
 ## Configuration
@@ -2568,10 +2570,16 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 ```
 
 Covers QML syntax (`qmllint`'s `[syntax]` class only), the pure functions in
-`Layout.js` and `Translate.js`, and both `bin/` scripts. The QML layer has no
+`Layout.js` and `Translate.js`, both `bin/` scripts, and one static assertion on
+`Transport.qml`. The QML layer has no
 harness — after any QML edit, restart the shell rather than trusting a
 hot-reload, because a plugin that fails to compile keeps reporting the stale
 error and the stale line number.
+
+The entry point is not inert: the `bin/` section drives the real clipboard, and
+`pick-text`'s fallback case synthesises a `Ctrl+C` into whichever window has
+focus. Run it from a terminal you can afford to have interrupted — it saves and
+restores your selections around the run.
 ````
 
 - [ ] **Step 4: 装键位**
@@ -2579,12 +2587,12 @@ error and the stale line number.
 在 `~/.config/hypr/bindings.lua` 末尾追加：
 
 ```lua
-o.bind("SUPER + CTRL + T", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
-o.bind("SUPER + CTRL + SHIFT + T", "Copy translation", "omarchy-shell billy.translate copy")
+o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
 ```
 
 Run: `omarchy menu keybindings --print | grep -i translat`
-Expected: 两行都在。**若第一条没有出现**，说明 `SUPER + CTRL + T` 已被占用 —— `o.bind` 会覆盖，但值得确认没踩到别的功能：`omarchy menu keybindings --print | grep "SUPER + CTRL + T"`。
+Expected: 两行都在。**若第一条没有出现**，说明 `SUPER + CTRL + U` 已被占用 —— `o.bind` 会覆盖，但值得确认没踩到别的功能：`omarchy menu keybindings --print | grep "SUPER + CTRL + U"`。
 
 - [ ] **Step 5: 从零验一次全新安装**
 
@@ -2592,7 +2600,7 @@ Expected: 两行都在。**若第一条没有出现**，说明 `SUPER + CTRL + T
 rm -rf ~/.local/state/omarchy/translate
 omarchy plugin enable billy.translate
 omarchy restart shell && sleep 3
-# 选中一段文字，按 SUPER + CTRL + T
+# 选中一段文字，按 SUPER + CTRL + U
 ls -l ~/.local/state/omarchy/translate/config.json
 ```
 Expected: 插件可用，配置被自动创建。这验证的是一条新用户会走的路径 —— 前面所有测试都跑在已经配好的状态上。

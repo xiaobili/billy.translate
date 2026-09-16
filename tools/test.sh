@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Everything that can be checked without starting the shell.
+# Everything that can be checked without starting the shell — but not inert: the
+# bin/ section drives the real clipboard and synthesises a Ctrl+C into the focused
+# window, so run it from a terminal you can afford to have interrupted.
 #
 # The QML layer is not covered here: there is no harness for it, and a plugin
 # that fails to compile stays broken through hot-reload, so a restart is the

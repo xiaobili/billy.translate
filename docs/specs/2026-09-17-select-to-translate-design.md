@@ -40,7 +40,7 @@
 ## 4. 架构
 
 ```
-Hyprland 键位 (SUPER + CTRL + T)
+Hyprland 键位 (SUPER + CTRL + U)
   └─ omarchy-shell shell toggle billy.translate '{}'
        └─ shell.summon() → Overlay.qml.open(payloadJson)
             ├─ ① Probe.cursorPos()   → bin/cursor-pos    （~15ms）
@@ -234,7 +234,7 @@ idle ──open()──> picking ──取到文本──> translating ──流
 | `Esc` | 取消进行中的请求并关闭 |
 | 再按一次快捷键 | 同上（`toggle`） |
 | 点击气泡外 | 关闭 |
-| 点击复制 / `SUPER + CTRL + SHIFT + T` | 复制译文，图标变对勾反馈 |
+| 点击复制 / `SUPER + CTRL + SHIFT + U` | 复制译文，图标变对勾反馈 |
 
 复制的是**译文**（用户已确认的范围）。
 
@@ -319,8 +319,8 @@ Rules:
 `~/.config/hypr/bindings.lua`：
 
 ```lua
-o.bind("SUPER + CTRL + T", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
-o.bind("SUPER + CTRL + SHIFT + T", "Copy translation", "omarchy-shell billy.translate copy")
+o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
 ```
 
 第一条走 shell 门面（与 clipboard / emojis 的写法一致）；第二条直接打插件自己的 `IpcHandler`。因此根元素必须暴露 `open(payloadJson)`、`close()` 和 `opened` 属性 —— 这是 shell 门面的契约（`shell.summon()` 调 `loader.item.open()`，`isPluginOpen()` 优先读 `loader.item.opened === true`）。
