@@ -1265,7 +1265,6 @@ QtObject {
 
   readonly property string home: Quickshell.env("HOME") || ""
   readonly property string stateHome: Quickshell.env("XDG_STATE_HOME") || (root.home + "/.local/state")
-  readonly property string off("XDG_STATE_HOME")
   readonly property string dir: root.stateHome + "/omarchy/translate"
   readonly property string configPath: root.dir + "/config.json"
   // Read once, on first run, to seed the config. Never written back to.
