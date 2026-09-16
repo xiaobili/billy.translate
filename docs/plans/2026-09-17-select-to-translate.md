@@ -1089,7 +1089,7 @@ printf '%s' "$after"
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `chmod +x bin/pick-text && ./tests/scripts.test.sh`
-Expected: 全部 `ok`，`15/15 passed`
+Expected: 全部 `ok`，`22/22 passed`（Task 4 留下的 17 条 + 本任务新增的 5 条）
 
 - [ ] **Step 5: 在真实应用里手动验一次**
 
