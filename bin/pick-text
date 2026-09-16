@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Prints the current selection, or nothing (with a non-zero exit) when there
+# is none.
+#
+# The primary selection is tried first: it is what a mouse drag fills in, and
+# reading it touches nothing. Only when it is empty does this fall back to
+# synthesising Ctrl+C and reading the clipboard — which clobbers the user's
+# clipboard, so the original is captured and put back.
+#
+# Why a script: the fallback is a timed sequence — press, poll, restore — with
+# a failure path at every step. In QML that becomes a web of Processes and
+# timers; here it is one file that can be run and asserted from a terminal.
+set -uo pipefail
+
+# How long to wait for the synthetic Ctrl+C to land. Long enough for a slow
+# app to service the key, short enough that a keypress that goes nowhere does
+# not feel like a hang.
+POLL_INTERVAL_MS=25
+POLL_ATTEMPTS=16
+
+# ------------------------------------------------------- path 1: primary
+
+primary="$(wl-paste --primary --no-newline 2>/dev/null)" && [ -n "$primary" ] && {
+  printf '%s' "$primary"
+  exit 0
+}
+
+# --------------------------------------------------- path 2: the fallback
+
+backup="$(mktemp -d)" || exit 1
+restored=0
+
+restore() {
+  [ "$restored" -eq 1 ] && return
+  restored=1
+  # Types are replayed in the order they were captured. A type whose data
+  # could not be read is skipped rather than copied empty, so one unreadable
+  # flavour cannot blank the whole clipboard.
+  while IFS= read -r type; do
+    [ -n "$type" ] || continue
+    [ -s "$backup/data" ] || continue
+    if [ -f "$backup/by-type/$type" ]; then
+      wl-copy --type "$type" < "$backup/by-type/$type" 2>/dev/null || true
+    fi
+  done < "$backup/types"
+  rm -rf "$backup"
+}
+
+cleanup() {
+  local code=$?
+  restore
+  exit "$code"
+}
+trap cleanup EXIT
+
+mkdir -p "$backup/by-type"
+wl-paste --list-types 2>/dev/null > "$backup/types" || true
+
+# The full payload is captured first so the "did it change" comparison below
+# has something to compare against even for non-text flavours.
+wl-paste --no-newline 2>/dev/null > "$backup/data" || true
+
+while IFS= read -r type; do
+  [ -n "$type" ] || continue
+  safe="${type//\//_}"
+  wl-paste --type "$type" 2>/dev/null > "$backup/by-type/$safe" || rm -f "$backup/by-type/$safe"
+done < "$backup/types"
+
+# Remember which flavour was the text one, if any, so the comparison uses the
+# same representation the app will actually offer.
+before="$(cat "$backup/data" 2>/dev/null || true)"
+
+wtype -M ctrl -k c -m ctrl 2>/dev/null || exit 1
+
+# Poll rather than sleep a fixed interval: a fast app answers on the first
+# tick, and a slow one gets the full budget.
+after=""
+for _ in $(seq "$POLL_ATTEMPTS"); do
+  sleep "$(awk -v ms="$POLL_INTERVAL_MS" 'BEGIN{printf "%.3f", ms/1000}')"
+  after="$(wl-paste --no-newline 2>/dev/null || true)"
+  [ "$after" != "$before" ] && break
+done
+
+[ "$after" != "$before" ] || exit 1
+[ -n "$after" ] || exit 1
+
+printf '%s' "$after"

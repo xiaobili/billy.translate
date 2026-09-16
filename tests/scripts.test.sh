@@ -138,6 +138,39 @@ check "rotated layout: a point off the rotated monitor fails" "$?" "1"
 
 rm -rf "$stub"
 
+# ----------------------------------------------------------------- pick-text
+
+# pick-text synthesises a real Ctrl+C, and the focused surface while a test
+# runs is the terminal that started it. The terminal turns that into SIGINT
+# for its foreground process group — this script. Ignoring SIGINT here is what
+# keeps the fallback test from killing its own runner. The disposition is
+# inherited across exec, so the children ignore it too.
+trap '' INT
+
+# Path 1: a populated primary selection is used as-is, with no clipboard
+# side effects at all.
+printf 'primary-selection-probe' | wl-copy --primary
+before="$(wl-paste --no-newline)"
+check "pick-text prefers the primary selection" "$("$ROOT/bin/pick-text")" "primary-selection-probe"
+check "the primary path leaves the clipboard untouched" "$(wl-paste --no-newline)" "$before"
+wl-copy --clear --primary
+
+# Path 2: an empty primary selection falls back to the clipboard, and the
+# clipboard is restored afterwards. Verified against a distinctive sentinel so
+# a partially-restored clipboard cannot pass.
+printf 'clipboard-sentinel-do-not-lose' | wl-copy
+wl-copy --clear --primary
+out2="$("$ROOT/bin/pick-text" 2>/dev/null)"; status2=$?
+check "the fallback path leaves the clipboard restored" "$(wl-paste --no-newline)" "clipboard-sentinel-do-not-lose"
+# Nothing was selected and nothing received the synthetic Ctrl+C, so the
+# script must report failure rather than return the clipboard's own contents.
+#
+# The status is captured on the assignment line above, NOT read as $? here:
+# the intervening check() call would overwrite $? with its own status, which
+# is 0, so the assertion would pass no matter what pick-text returned.
+check "the fallback reports failure when nothing is selected" "$status2" "1"
+check "no text is emitted on failure" "$out2" ""
+
 echo
 echo "$((checks - failures))/$checks passed"
 [ "$failures" -eq 0 ]
