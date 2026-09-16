@@ -2394,6 +2394,7 @@ synthetic Ctrl+C grabs the wrong thing, that is how you see it."
 **Files:**
 - Modify: `README.md`
 - Create: `tools/test.sh`
+- Modify: `tests/scripts.test.sh`（追加一条 R40 回归断言）
 - Modify: `~/.config/hypr/bindings.lua`
 
 **Interfaces:**
@@ -2430,6 +2431,22 @@ echo "== bin/ scripts =="
 
 exit "$status"
 ```
+
+然后在 `tests/scripts.test.sh` 的汇总行**之前**追加一条静态回归断言。R40 是「一个函数用错在一个调用点」
+的缺陷，而那个调用点只有一处，所以按调用点断言就够——QML 层没有行为测试的载体：
+
+```bash
+# --------------------------------------------------------------- transport
+
+# The status marker has to reach curl with real line breaks around it. Routed
+# through quote() — which folds newlines to spaces — it glues onto the response
+# body and parseHttpMarker reads -1, silently bypassing every status branch of
+# errorText. This asserts the call site, which is the only place it can regress.
+check_match "transport routes the status marker through curlEscape" \
+  "$(grep 'write-out' "$ROOT/Transport.qml")" 'curlEscape\(Translate\.httpMarker\(\)\)'
+```
+
+Expected: `25/25 passed`（前面的 24 条 + 这一条）。
 
 - [ ] **Step 2: 跑全量**
 
