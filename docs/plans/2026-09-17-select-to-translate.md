@@ -1689,8 +1689,10 @@ QtObject {
   property string stderrTail: ""
   property string stopReason: "" // "" | "user" | "timeout"
 
-  readonly property string dir: (Quickshell.env("XDG_STATE_HOME")
-    || ((Quickshell.env("HOME") || "") + "/.local/state")) + "/omarchy/translate"
+  // Injected by Overlay.qml from Config's dir, which owns the state path —
+  // the plugin derives it in exactly one place. Two derivations of the same
+  // path drift, and only one of them can be right.
+  property string dir: ""
   readonly property string bodyPath: root.dir + "/body.json"
   readonly property string curlConfPath: root.dir + "/curl.conf"
 
@@ -2267,6 +2269,8 @@ PanelWindow {
 
   property Transport transport: Transport {
     config: root.config.ready ? root.config.config : null
+    // F2: Transport does not derive the state path — Config owns it.
+    dir: root.config.dir
     text: root.selectedText
     // The phase stays "translating" until the stream ends — the bubble shows
     // whatever has arrived, so there is no need to promote a partial answer
