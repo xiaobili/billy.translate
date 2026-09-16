@@ -117,12 +117,14 @@ stdout 输出取到的文本；取不到则 stdout 为空且退出码非 0。
 
 1. `wl-paste --primary --no-newline` → 非空即输出并退出。**这条路覆盖绝大多数应用，零副作用。**
 2. 否则走兜底：
-   1. 按 `wl-paste --clipboard --list-types` 逐类型**备份**整个剪贴板到临时目录 —— 备份类型而非只备份文本，这样图片、富文本也能原样还原
+   1. 按 `wl-paste --list-types` 逐类型**备份**整个剪贴板到临时目录 —— 备份类型而非只备份文本，这样图片、富文本也能原样还原
    2. `wtype -M ctrl -k c -m ctrl`
-   3. 每 25ms 轮询 `wl-paste --clipboard --no-newline`，上限 ~400ms，直到内容 ≠ 备份内容
+   3. 每 25ms 轮询 `wl-paste --no-newline`，上限 ~400ms，直到内容 ≠ 备份内容
    4. **还原剪贴板**（逐类型 `wl-copy --type`）
    5. 输出取到的文本
 3. 任何一步失败都要走还原路径后退出非 0（`trap` 或显式清理）。
+
+> **选项名注意**：wl-clipboard 2.3.0 里**没有 `--clipboard` 这个选项** —— 剪贴板是默认目标，`--primary` 才是切到主选择区。所以是 `wl-paste`（剪贴板）与 `wl-paste --primary`（主选择区）的对比，不是两个对称的长选项。此机已实测确认。
 
 ### 已知副作用（写进 README）
 
@@ -275,7 +277,7 @@ Rules:
 **可以自动/命令行验证的：**
 
 - `bin/cursor-pos` —— 直接跑，人工核对输出与 `hyprctl cursorpos`、`hyprctl -j monitors` 是否自洽
-- `bin/pick-text` —— 直接跑。分别在（a）已有主选择区、（b）无主选择区但有可复制选区 两种情况下验证；用 `wl-paste --clipboard` 前后对拍确认剪贴板被还原
+- `bin/pick-text` —— 直接跑。分别在（a）已有主选择区、（b）无主选择区但有可复制选区 两种情况下验证；用 `wl-paste` 在跑之前/之后各取一次对拍，确认剪贴板被原样还原
 - `Translate.js` 里的纯函数（prompt 构造、SSE 解析、错误文案）—— 可用 `qjs`/`node` 直接跑
 
 **只能手动验证的：**
