@@ -2218,8 +2218,10 @@ PanelWindow {
   // ------------------------------------------------------------------- state
 
   function open(payloadJson) {
-    // Toggling closed is the caller's job; a second open re-runs the pick so
-    // that the key always means "translate what is selected".
+    // `opened` is set before the pick runs, so from this moment the shell
+    // facade already reports the plugin open: a second hotkey press takes the
+    // toggle's hide branch and cancels rather than re-picking. The pick below
+    // runs once, on this call. (R13)
     root.opened = true
     root.copied = false
     root.failureText = ""
