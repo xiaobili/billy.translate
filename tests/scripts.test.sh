@@ -266,6 +266,15 @@ else
   wl-copy --clear --primary 2>/dev/null
 fi
 
+# --------------------------------------------------------------- transport
+
+# The status marker has to reach curl with real line breaks around it. Routed
+# through quote() — which folds newlines to spaces — it glues onto the response
+# body and parseHttpMarker reads -1, silently bypassing every status branch of
+# errorText. This asserts the call site, which is the only place it can regress.
+check_match "transport routes the status marker through curlEscape" \
+  "$(grep 'write-out' "$ROOT/Transport.qml")" 'curlEscape\(Translate\.httpMarker\(\)\)'
+
 echo
 echo "$((checks - failures))/$checks passed"
 [ "$failures" -eq 0 ]

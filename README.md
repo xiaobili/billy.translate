@@ -1,6 +1,83 @@
 # Translate (billy.translate)
 
 Select text anywhere, press `SUPER + CTRL + T`, read the translation in a
-bubble at the cursor.
+bubble at the cursor. Translations stream in, and the bubble copies with one
+click.
 
-Full documentation is written in Task 10 of the implementation plan.
+- **Selects Chinese** → translates to English
+- **Selects anything else** → translates to Simplified Chinese
+
+## Installing
+
+Third-party plugins are not enabled by default. The id has to be in
+`~/.config/omarchy/shell.json`'s top-level `plugins` list, which
+`omarchy plugin enable billy.translate` does. Without it, summoning is refused
+— the shell logs `plugin not enabled, not summoning: billy.translate` — while
+`omarchy-shell shell toggle` still exits 0, so the failure is silent.
+
+## Keys
+
+| Key | Action |
+|---|---|
+| `SUPER + CTRL + T` | Translate the selection; press again to dismiss |
+| `SUPER + CTRL + SHIFT + T` | Copy the current translation |
+| `Esc`, or click outside | Dismiss |
+
+Bind them in `~/.config/hypr/bindings.lua`:
+
+```lua
+o.bind("SUPER + CTRL + T", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("SUPER + CTRL + SHIFT + T", "Copy translation", "omarchy-shell billy.translate copy")
+```
+
+## Configuration
+
+`~/.local/state/omarchy/translate/config.json` (mode 0600), written on first
+run from the chat plugin's config:
+
+| Key | Meaning |
+|---|---|
+| `baseUrl` | Any OpenAI-compatible root, e.g. `https://api.deepseek.com/v1` |
+| `model` | Model id |
+| `apiKey` | Bearer token; leave empty for a local server that needs none |
+| `systemPrompt` | Empty uses the built-in translation prompt |
+| `temperature` | `0.2` by default — translation wants determinism |
+| `maxTokens` | `0` means "do not send the field" |
+| `timeoutSec` | Request timeout, `60` by default |
+
+The API key deliberately does **not** live in `~/.config/omarchy/shell.json`:
+plugin settings there are inline on the bar entry, and the shell rewrites that
+file on every layout change. It is also kept out of `argv` — curl reads it from
+a 0600 config file, because `/proc/<pid>/cmdline` is world-readable.
+
+## How the selection is read
+
+The primary selection first — that is what a mouse drag fills, and reading it
+touches nothing. Only when it is empty does the plugin synthesise `Ctrl+C` and
+read the clipboard, restoring the original afterwards.
+
+**Known side effect:** on that fallback path the selection may land in the
+omarchy clipboard history. The synthetic copy and its undo are separate
+clipboard writes, and a clipboard watcher can observe the one in between.
+
+## Known limitations
+
+1. The fallback path may leave the selection in clipboard history (above).
+2. While the bubble is open it covers the screen, so you cannot select new text
+   until you dismiss it. This is deliberate: a non-modal bubble that cannot
+   take keyboard focus would also be one you could not close with `Esc`.
+3. Some apps do not populate the primary selection at all, so they always take
+   the fallback path.
+4. There is no settings UI. Edit the JSON.
+
+## Tests
+
+```bash
+./tools/test.sh
+```
+
+Covers QML syntax (`qmllint`'s `[syntax]` class only), the pure functions in
+`Layout.js` and `Translate.js`, and both `bin/` scripts. The QML layer has no
+harness — after any QML edit, restart the shell rather than trusting a
+hot-reload, because a plugin that fails to compile keeps reporting the stale
+error and the stale line number.
