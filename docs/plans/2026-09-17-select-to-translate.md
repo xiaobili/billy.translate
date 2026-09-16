@@ -2597,7 +2597,9 @@ run from the chat plugin's config:
 The request disables the provider's thinking mode (`thinking: {type: "disabled"}`).
 This tool only translates, and on DeepSeek thinking mode also ignores
 `temperature` — so leaving it on costs latency and tokens while quietly making
-the setting above do nothing.
+the setting above do nothing. The field is DeepSeek's and is sent
+unconditionally: an endpoint that rejects unknown body fields would answer 400
+and would need that one line removed in `Translate.js`.
 
 The API key deliberately does **not** live in `~/.config/omarchy/shell.json`:
 plugin settings there are inline on the bar entry, and the shell rewrites that
