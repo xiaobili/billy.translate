@@ -85,5 +85,6 @@ error and the stale line number.
 
 The entry point is not inert: the `bin/` section drives the real clipboard, and
 `pick-text`'s fallback case synthesises a `Ctrl+C` into whichever window has
-focus. Run it from a terminal you can afford to have interrupted — it saves and
-restores your selections around the run.
+focus. Run it from a terminal you can afford to have interrupted. It puts your
+*text* selections back afterwards; a clipboard holding anything else — an image,
+a file list — is not restored.
