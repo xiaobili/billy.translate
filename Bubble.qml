@@ -27,17 +27,21 @@ Item {
   // Caps the translation area so the card stops growing once the text gets
   // long, and the text scrolls under a fixed ceiling instead.
   readonly property int maxResultHeight: Style.space(260)
+  readonly property int cardPadding: Style.space(14)
 
   x: root.placement.x
   y: root.placement.y
   width: root.cardWidth
-  height: Math.max(root.minHeight, Math.min(root.maxHeight, body.implicitHeight))
+  // The column is inset by cardPadding on every side, so its content occupies
+  // [padding, padding + implicitHeight] while the card would otherwise end at
+  // implicitHeight — the last line would draw outside the card.
+  height: Math.max(root.minHeight, Math.min(root.maxHeight, body.implicitHeight + 2 * root.cardPadding))
 
   BorderSurface {
     anchors.fill: parent
     radius: Style.cornerRadius
     color: Color.popups.background
-    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, 1)
+    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
     Column {
       id: body
@@ -46,7 +50,7 @@ Item {
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: parent.top
-      anchors.margins: Style.space(14)
+      anchors.margins: root.cardPadding
       spacing: Style.space(8)
 
       // ------------------------------------------------------------- header
@@ -142,6 +146,8 @@ Item {
         visible: root.phase === "empty"
         text: root.errorText
         color: Color.muted
+        elide: Text.ElideRight
+        maximumLineCount: 3
         wrapMode: Text.Wrap
         font.family: Style.font.resolvedFamily
         font.pixelSize: Style.font.body
@@ -154,6 +160,8 @@ Item {
         visible: root.phase === "error" && root.translation !== ""
         text: root.errorText
         color: Color.urgent
+        elide: Text.ElideRight
+        maximumLineCount: 3
         wrapMode: Text.Wrap
         font.family: Style.font.resolvedFamily
         font.pixelSize: Style.font.caption

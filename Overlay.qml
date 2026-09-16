@@ -142,12 +142,17 @@ PanelWindow {
       root.phase = "empty"
     }
     onTextReady: function (text) {
+      // A second hotkey press inside the pick window takes the toggle's hide
+      // branch, but the pick is already in flight: without this, its late
+      // textReady starts a full translation behind a closed overlay.
+      if (!root.opened) return
       root.selectedText = text
       root.directionLabel = root.labelFor(text)
       root.phase = "translating"
       transport.start()
     }
     onTextFailed: function (message) {
+      if (!root.opened) return
       root.failureText = message
       root.phase = "empty"
     }
@@ -176,6 +181,16 @@ PanelWindow {
 
   Rectangle { anchors.fill: parent; color: Color.menu.scrim }
   MouseArea { anchors.fill: parent; onClicked: root.close() }
+
+  // The overlay takes WlrKeyboardFocus.Exclusive, so a key it does not handle is
+  // swallowed rather than reaching the app underneath: without this, Esc does
+  // nothing at all while the bubble is open. Same shape as the shell's own
+  // Ui/SpeedTestOverlay.qml.
+  Item {
+    anchors.fill: parent
+    focus: true
+    Keys.onEscapePressed: root.close()
+  }
 
   // Declared in the body rather than as a `property Bubble bubble: ...` so the
   // visual parent is unambiguous and the card is actually in the scene.
