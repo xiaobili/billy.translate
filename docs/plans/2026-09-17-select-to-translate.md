@@ -2181,7 +2181,17 @@ PanelWindow {
   WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
   exclusionMode: ExclusionMode.Ignore
 
-  readonly property string pluginDir: root.manifest && root.manifest.__sourceDir ? root.manifest.__sourceDir : ""
+  // This plugin's own directory, derived from this file's URL. Not from the
+  // manifest: the shell strips `__sourceDir` before handing a manifest to a
+  // third-party plugin (shell.qml publicPluginManifest() deletes it on the
+  // non-first-party branch), so `root.manifest.__sourceDir` is always empty
+  // here and every spawn would target a path that does not exist. Nothing else
+  // the shell injects carries a path either.
+  readonly property string pluginDir: {
+    var u = String(Qt.resolvedUrl("."))
+    if (u.indexOf("file://") === 0) u = u.substring(7)
+    return decodeURIComponent(u).replace(/\/$/, "")
+  }
 
   // ------------------------------------------------------------------ layout
 
