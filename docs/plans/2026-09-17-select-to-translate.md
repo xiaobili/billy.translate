@@ -890,11 +890,15 @@ wl-copy --clear --primary
 # a partially-restored clipboard cannot pass.
 printf 'clipboard-sentinel-do-not-lose' | wl-copy
 wl-copy --clear --primary
-out2="$("$ROOT/bin/pick-text" 2>/dev/null)"
+out2="$("$ROOT/bin/pick-text" 2>/dev/null)"; status2=$?
 check "the fallback path leaves the clipboard restored" "$(wl-paste --no-newline)" "clipboard-sentinel-do-not-lose"
 # Nothing was selected and nothing received the synthetic Ctrl+C, so the
 # script must report failure rather than return the clipboard's own contents.
-check "the fallback reports failure when nothing is selected" "$?" "1"
+#
+# The status is captured on the assignment line above, NOT read as $? here:
+# the intervening check() call would overwrite $? with its own status, which
+# is 0, so the assertion would pass no matter what pick-text returned.
+check "the fallback reports failure when nothing is selected" "$status2" "1"
 check "no text is emitted on failure" "$out2" ""
 ```
 
