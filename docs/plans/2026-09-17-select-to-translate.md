@@ -2004,17 +2004,21 @@ Item {
   // Caps the translation area so the card stops growing once the text gets
   // long, and the text scrolls under a fixed ceiling instead.
   readonly property int maxResultHeight: Style.space(260)
+  readonly property int cardPadding: Style.space(14)
 
   x: root.placement.x
   y: root.placement.y
   width: root.cardWidth
-  height: Math.max(root.minHeight, Math.min(root.maxHeight, body.implicitHeight))
+  // The column is inset by cardPadding on every side, so its content occupies
+  // [padding, padding + implicitHeight] while the card would otherwise end at
+  // implicitHeight — the last line would draw outside the card.
+  height: Math.max(root.minHeight, Math.min(root.maxHeight, body.implicitHeight + 2 * root.cardPadding))
 
   BorderSurface {
     anchors.fill: parent
     radius: Style.cornerRadius
     color: Color.popups.background
-    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, 1)
+    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
     Column {
       id: body
@@ -2023,7 +2027,7 @@ Item {
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: parent.top
-      anchors.margins: Style.space(14)
+      anchors.margins: root.cardPadding
       spacing: Style.space(8)
 
       // ------------------------------------------------------------- header
@@ -2119,6 +2123,8 @@ Item {
         visible: root.phase === "empty"
         text: root.errorText
         color: Color.muted
+        elide: Text.ElideRight
+        maximumLineCount: 3
         wrapMode: Text.Wrap
         font.family: Style.font.resolvedFamily
         font.pixelSize: Style.font.body
@@ -2131,6 +2137,8 @@ Item {
         visible: root.phase === "error" && root.translation !== ""
         text: root.errorText
         color: Color.urgent
+        elide: Text.ElideRight
+        maximumLineCount: 3
         wrapMode: Text.Wrap
         font.family: Style.font.resolvedFamily
         font.pixelSize: Style.font.caption
@@ -2287,12 +2295,17 @@ PanelWindow {
       root.phase = "empty"
     }
     onTextReady: function (text) {
+      // A second hotkey press inside the pick window takes the toggle's hide
+      // branch, but the pick is already in flight: without this, its late
+      // textReady starts a full translation behind a closed overlay.
+      if (!root.opened) return
       root.selectedText = text
       root.directionLabel = root.labelFor(text)
       root.phase = "translating"
       transport.start()
     }
     onTextFailed: function (message) {
+      if (!root.opened) return
       root.failureText = message
       root.phase = "empty"
     }
@@ -2321,6 +2334,16 @@ PanelWindow {
 
   Rectangle { anchors.fill: parent; color: Color.menu.scrim }
   MouseArea { anchors.fill: parent; onClicked: root.close() }
+
+  // The overlay takes WlrKeyboardFocus.Exclusive, so a key it does not handle is
+  // swallowed rather than reaching the app underneath: without this, Esc does
+  // nothing at all while the bubble is open. Same shape as the shell's own
+  // Ui/SpeedTestOverlay.qml.
+  Item {
+    anchors.fill: parent
+    focus: true
+    Keys.onEscapePressed: root.close()
+  }
 
   // Declared in the body rather than as a `property Bubble bubble: ...` so the
   // visual parent is unambiguous and the card is actually in the scene.
