@@ -27,10 +27,35 @@
 ### 三个必须记住的操作事实
 
 1. **QML 编译错误是粘性的。** `rescanPlugins` 会重放**同一个旧错误、同一行号**，看起来像没生效。修复后必须 `omarchy restart shell`。判断方法：日志行号与磁盘内容对不上。
-2. **读日志只看当前进程**：`journalctl --user | grep "omarchy-shell\[$PID\]"`，否则上个进程的错误看起来像现在的。
-3. **`qmllint` 是语法门禁。** `/usr/lib/qt6/bin/qmllint <file> 2>&1 | grep '\[syntax\]'` 必须为空。实测第一方 `Clipboard.qml` 命中 0 条，缺右括号/表达式截断各命中 1 条 —— 零假阳性。这把「重启 shell 才发现语法错」提前到了编辑时。
+2. **读日志只看当前进程**，否则上个进程的错误看起来像现在的：
+
+   ```bash
+   journalctl --user --since "2 min ago" | grep "omarchy-shell\[$(pgrep -x quickshell)\]"
+   ```
+
+   **注意进程名**：shell 进程的 argv[0] 是 `quickshell`（不是 `omarchy-shell`），但 journald 把它的行标成 `omarchy-shell[PID]`。所以 `pgrep -x omarchy-shell` 会**退出码 1、无匹配**，外面套的 `grep` 于是静默匹配不到任何东西 —— 读起来就像「没有错误」。已在本机实测确认。
+
+3. **`qmllint` 是语法门禁，但只证明语法。** `/usr/lib/qt6/bin/qmllint <file> 2>&1 | grep '\[syntax\]'` 必须为空。实测第一方 `Clipboard.qml` 命中 0 条，缺右括号/表达式截断各命中 1 条 —— 零假阳性。这把「重启 shell 才发现语法错」提前到了编辑时。
+
+   **通过它不等于插件能加载。** 加载期的拒绝（未标注类型的 `IpcHandler` 参数、解析不了的导入、manifest 问题）不是解析错误，门禁看不见。真正的加载检查只有 `omarchy restart shell` 之后读日志。
 
 > `qmllint` 对 `qs.*` 导入和 `PanelWindow` 会报大量无法解析的警告，那是正常的（它们由运行中的 shell 注册）。**只过滤 `[syntax]`**，别的都忽略。
+
+### 前置条件：插件必须先启用
+
+第三方 overlay 插件**默认不启用**。`id` 必须出现在 `~/.config/omarchy/shell.json` 的顶层 `plugins[]` 里，否则 `shell.summon()` 会拒绝：
+
+```
+WARN qml: summon: plugin not enabled, not summoning: billy.translate
+```
+
+注意 `omarchy-shell shell toggle ...` 在这种情况下**仍然以 0 退出**，看起来像成功 —— 这是静默失败。启用：
+
+```bash
+omarchy plugin enable billy.translate
+```
+
+Task 1 的验证已在本机执行过这一步。**Task 10 的 README 必须写明它**，否则全新克隆第一次 summon 会静默无反应。
 
 ---
 
