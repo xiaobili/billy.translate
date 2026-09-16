@@ -138,14 +138,37 @@ stdout 输出取到的文本；取不到则 stdout 为空且退出码非 0。
 <屏幕名> <局部x> <局部y> <屏宽> <屏高>
 ```
 
-换算：
+#### 坐标系（2026-09-17 修正）
+
+**Hyprland 的 IPC 输出混用两套坐标，字段名看不出来：**
+
+| 字段 | 空间 |
+|---|---|
+| `monitors[].width` / `.height` | **物理**（mode）像素 |
+| `monitors[].x` / `.y` | **逻辑**（已缩放）坐标 |
+| `hyprctl cursorpos` | **逻辑** |
+
+依据（两条独立来源）：
+
+1. Hyprland wiki 关于位置的定义：「The position is calculated with the scaled (and transformed) resolution, meaning if you want your 4K monitor with scale 2 to the left of your 1080p one, you'd use the position `1920x0` for the second screen. (3840 / 2)」
+2. omarchy 自己的 PR #6363 定义了 jq 助手 `logical($px; $s): ($px * 120 / (($s * 120) | round)) | round`，并以 `logical($f.width; $f.scale)` 调用 —— 即逻辑宽 = `width / scale`。
+
+所以换算**不做除法**（两边同为逻辑空间），而屏幕尺寸**要做除法**：
 
 ```
-局部x = (光标全局x - 显示器x) / 显示器scale
-局部y = (光标全局y - 显示器y) / 显示器scale
+局部x  = 光标全局x - 显示器x          # 不除 scale
+局部y  = 光标全局y - 显示器y
+屏宽   = 显示器width  / 显示器scale    # 除 scale
+屏高   = 显示器height / 显示器scale
 ```
 
-layer-shell 的坐标是逻辑像素，所以要除缩放。屏幕名与尺寸取 `hyprctl -j monitors` 中**包含光标点**的那一块。
+命中判定（哪块屏包含光标）也必须用**逻辑**宽度：`x >= mon.x and x < mon.x + mon.width/scale`。
+
+**这个 bug 为什么差点漏掉**：scale = 1 时两套空间完全重合，除法是恒等变换，任何单屏 scale-1 的测试和变异测试都观察不到它。在 scale = 2 的显示器上会导致局部坐标错位；在**混合缩放的多屏**布局上，物理宽度会让判定选中**错误的显示器**（实测：两块屏的合成布局下，光标在右侧屏，错误实现选中了左侧屏并给出完全错误的局部坐标）。
+
+因此 `bin/cursor-pos` 支持 `HYPRCTL` 环境变量覆盖（默认 `hyprctl`），测试据此注入合成布局 —— 否则这段换算在本机不可能被测到。
+
+屏幕名与尺寸取 `hyprctl -j monitors` 中**包含光标点**的那一块。
 
 QML 侧：按屏幕名匹配 `Quickshell.screens`，绑到 `PanelWindow.screen`。
 
