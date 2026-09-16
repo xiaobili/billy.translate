@@ -737,8 +737,16 @@ check "cursor-pos emits five fields" "$(printf '%s' "$out" | awk '{print NF}')" 
 # than a hard-coded value so the test survives a resolution change.
 mon="$(hyprctl -j monitors | jq -c --arg n "$(printf '%s' "$out" | awk '{print $1}')" '.[] | select(.name==$n)')"
 check_match "cursor-pos names a real monitor" "$mon" '^\{'
-check "reported width matches hyprctl" "$(printf '%s' "$out" | awk '{print $4}')" "$(printf '%s' "$mon" | jq -r '.width')"
-check "reported height matches hyprctl" "$(printf '%s' "$out" | awk '{print $5}')" "$(printf '%s' "$mon" | jq -r '.height')"
+# Compared against the LOGICAL extent, not hyprctl's raw width: raw width is
+# physical, and the script reports width/scale by design. Comparing to the raw
+# value passes only where scale is 1, and would tempt a future red run into
+# "fixing" correct code.
+check "reported width is the logical width" \
+  "$(printf '%s' "$out" | awk '{print $4}')" \
+  "$(printf '%s' "$mon" | jq -r '((.width / .scale) | floor)')"
+check "reported height is the logical height" \
+  "$(printf '%s' "$out" | awk '{print $5}')" \
+  "$(printf '%s' "$mon" | jq -r '((.height / .scale) | floor)')"
 
 lx="$(printf '%s' "$out" | awk '{print $2}')"
 ly="$(printf '%s' "$out" | awk '{print $3}')"
@@ -797,6 +805,27 @@ check "scaled layout: the boundary stays on the left screen" \
   "$(scaled 1919 0)" "DP-1 1919 0 1920 1080"
 check "scaled layout: the boundary flips to the right screen" \
   "$(scaled 1920 0)" "HDMI-A-1 0 0 1920 1080"
+
+# A rotated panel: mode 1920x1080 at transform 1 presents a LOGICAL 1080x1920
+# rectangle. Containment has to use that swapped extent. Testing the unswapped
+# numbers makes the monitor match nothing at all — the script exits 1 with
+# empty output even though the cursor is plainly sitting on it, and the feature
+# disappears entirely on any portrait display.
+PORTRAIT='[{"name":"eDP-1","x":0,"y":0,"width":1920,"height":1080,"scale":1,"transform":1}]'
+
+onPortrait() { # onPortrait <cursor-x> <cursor-y>
+  STUB_MONITORS="$PORTRAIT" STUB_CURSOR="$1, $2" HYPRCTL="$stub/hyprctl" "$ROOT/bin/cursor-pos"
+}
+
+check "rotated layout: finds the monitor the cursor is on" \
+  "$(onPortrait 500 1500)" "eDP-1 500 1500 1080 1920"
+check "rotated layout: reports the swapped logical extents" \
+  "$(onPortrait 1079 1919)" "eDP-1 1079 1919 1080 1920"
+# The same point lies outside the rotated rectangle, so there is no match and
+# the script must fail rather than emit a plausible-looking line.
+STUB_MONITORS="$PORTRAIT" STUB_CURSOR="1500, 500" HYPRCTL="$stub/hyprctl" \
+  "$ROOT/bin/cursor-pos" >/dev/null 2>&1
+check "rotated layout: a point off the rotated monitor fails" "$?" "1"
 
 rm -rf "$stub"
 
@@ -858,23 +887,25 @@ monitors="$("$HYPRCTL" -j monitors 2>/dev/null)" || exit 1
 # the wrong monitor entirely on a mixed-scale multi-monitor layout.
 line="$(printf '%s' "$monitors" | jq -r --argjson x "$gx" --argjson y "$gy" '
   [ .[]
-    | select($x >= .x and $x < (.x + (.width / .scale))
-             and $y >= .y and $y < (.y + (.height / .scale)))
+    # transform 1/3/5/7 rotate the panel, so the LOGICAL extents swap relative
+    # to the mode width/height. Containment must use the same extents the
+    # output reports: testing against the unswapped numbers makes a rotated
+    # monitor match nothing, and the feature silently returns no position.
+    | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
+        then (.height / .scale) else (.width / .scale) end) as $w
+    | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
+        then (.width / .scale) else (.height / .scale) end) as $h
+    | select($x >= .x and $x < (.x + $w) and $y >= .y and $y < (.y + $h))
+    | { name: .name, x: .x, y: .y, w: $w, h: $h }
   ]
   | .[0]
   | if . == null then empty
-    else
-      # transform 1/3/5/7 rotate the panel, so the logical extents swap.
-      (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
-         then (.height / .scale) else (.width / .scale) end) as $w
-      | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
-         then (.width / .scale) else (.height / .scale) end) as $h
-      | [ .name,
-          ((($x - .x)) | floor),
-          ((($y - .y)) | floor),
-          ($w | floor),
-          ($h | floor) ]
-      | @tsv
+    else [ .name,
+           ((($x - .x)) | floor),
+           ((($y - .y)) | floor),
+           (.w | floor),
+           (.h | floor) ]
+    | @tsv
     end
 ')" || exit 1
 [ -n "$line" ] || exit 1
@@ -885,7 +916,7 @@ printf '%s\n' "$line" | tr '\t' ' '
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `chmod +x bin/cursor-pos && ./tests/scripts.test.sh`
-Expected: 全部 `ok`，`14/14 passed`（10 条单屏 scale-1 用例 + 4 条合成混合缩放用例）
+Expected: 全部 `ok`，`17/17 passed`（10 条单屏 scale-1 + 4 条合成混合缩放 + 3 条合成旋转屏）
 
 - [ ] **Step 5: 和 hyprctl 肉眼对一次**
 
