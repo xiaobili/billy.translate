@@ -18,9 +18,17 @@ set -uo pipefail
 POLL_INTERVAL_MS=25
 POLL_ATTEMPTS=16
 
+# Overridable so a test can drive the restore path with stubs. The replay
+# cannot be exercised against the real clipboard: it needs a rich-text or image
+# selection, which the test would have to clobber to set up. Mirrors the
+# HYPRCTL override in bin/cursor-pos.
+WL_PASTE="${WL_PASTE:-wl-paste}"
+WL_COPY="${WL_COPY:-wl-copy}"
+WTYPE="${WTYPE:-wtype}"
+
 # ------------------------------------------------------- path 1: primary
 
-primary="$(wl-paste --primary --no-newline 2>/dev/null)" && [ -n "$primary" ] && {
+primary="$("$WL_PASTE" --primary --no-newline 2>/dev/null)" && [ -n "$primary" ] && {
   printf '%s' "$primary"
   exit 0
 }
@@ -33,16 +41,24 @@ restored=0
 restore() {
   [ "$restored" -eq 1 ] && return
   restored=1
-  # Types are replayed in the order they were captured. A type whose data
-  # could not be read is skipped rather than copied empty, so one unreadable
-  # flavour cannot blank the whole clipboard.
+  # Types are replayed under the same sanitised name they were captured as: a
+  # MIME type contains a slash, so the file for `text/html` is `text_html`.
+  # A type whose data could not be read is skipped rather than copied empty, so
+  # one unreadable flavour cannot blank the whole clipboard.
   while IFS= read -r type; do
     [ -n "$type" ] || continue
-    [ -s "$backup/data" ] || continue
-    if [ -f "$backup/by-type/$type" ]; then
-      wl-copy --type "$type" < "$backup/by-type/$type" 2>/dev/null || true
+    safe="${type//\//_}"
+    if [ -s "$backup/by-type/$safe" ]; then
+      "$WL_COPY" --type "$type" < "$backup/by-type/$safe" 2>/dev/null || true
     fi
   done < "$backup/types"
+  # Only the last wl-copy survives: each invocation becomes the selection owner
+  # and supersedes the previous one, so the flavours above are best-effort.
+  # Text is what a text tool should leave behind and what the next paste is
+  # most likely to ask for, so it is replayed last and wins.
+  if [ -s "$backup/data" ]; then
+    "$WL_COPY" < "$backup/data" 2>/dev/null || true
+  fi
   rm -rf "$backup"
 }
 
@@ -54,30 +70,32 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$backup/by-type"
-wl-paste --list-types 2>/dev/null > "$backup/types" || true
+"$WL_PASTE" --list-types 2>/dev/null > "$backup/types" || true
 
 # The full payload is captured first so the "did it change" comparison below
-# has something to compare against even for non-text flavours.
-wl-paste --no-newline 2>/dev/null > "$backup/data" || true
+# has something to compare against even for non-text flavours, and so the
+# text representation can be put back last. It is empty when the clipboard
+# holds no text flavour at all — an image, say — which is not a failure.
+"$WL_PASTE" --no-newline 2>/dev/null > "$backup/data" || true
 
 while IFS= read -r type; do
   [ -n "$type" ] || continue
   safe="${type//\//_}"
-  wl-paste --type "$type" 2>/dev/null > "$backup/by-type/$safe" || rm -f "$backup/by-type/$safe"
+  "$WL_PASTE" --type "$type" 2>/dev/null > "$backup/by-type/$safe" || rm -f "$backup/by-type/$safe"
 done < "$backup/types"
 
 # Remember which flavour was the text one, if any, so the comparison uses the
 # same representation the app will actually offer.
 before="$(cat "$backup/data" 2>/dev/null || true)"
 
-wtype -M ctrl -k c -m ctrl 2>/dev/null || exit 1
+"$WTYPE" -M ctrl -k c -m ctrl 2>/dev/null || exit 1
 
 # Poll rather than sleep a fixed interval: a fast app answers on the first
 # tick, and a slow one gets the full budget.
 after=""
 for _ in $(seq "$POLL_ATTEMPTS"); do
   sleep "$(awk -v ms="$POLL_INTERVAL_MS" 'BEGIN{printf "%.3f", ms/1000}')"
-  after="$(wl-paste --no-newline 2>/dev/null || true)"
+  after="$("$WL_PASTE" --no-newline 2>/dev/null || true)"
   [ "$after" != "$before" ] && break
 done
 

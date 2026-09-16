@@ -147,6 +147,13 @@ rm -rf "$stub"
 # inherited across exec, so the children ignore it too.
 trap '' INT
 
+# The checks below drive the real wl-clipboard, so they replace both of the
+# caller's selections. Save them first and put them back at the end: this suite
+# is run by hand on a live desktop, and a test that eats the caller's clipboard
+# is a test they stop running.
+saved_clip="$(wl-paste --no-newline 2>/dev/null || true)"
+saved_primary="$(wl-paste --primary --no-newline 2>/dev/null || true)"
+
 # Path 1: a populated primary selection is used as-is, with no clipboard
 # side effects at all.
 printf 'primary-selection-probe' | wl-copy --primary
@@ -170,6 +177,94 @@ check "the fallback path leaves the clipboard restored" "$(wl-paste --no-newline
 # is 0, so the assertion would pass no matter what pick-text returned.
 check "the fallback reports failure when nothing is selected" "$status2" "1"
 check "no text is emitted on failure" "$out2" ""
+
+# ---------------------------------------------- pick-text: the restore, stubbed
+
+# The replay cannot be exercised against the real clipboard: it needs a
+# rich-text or image selection, and setting one up would itself clobber the
+# caller's. So it is driven here with stubbed client binaries, asserting on what
+# was actually replayed. Both cases are invisible to the real-wl-clipboard
+# checks above:
+#   - a MIME type containing a slash — which is every type a real clipboard
+#     advertises (text/plain;charset=utf-8, text/html, image/png). The capture
+#     sanitises the slash out of the file name, so the replay has to look it up
+#     the same way.
+#   - a clipboard with no text flavour, where the plain payload is empty and
+#     must not be mistaken for "nothing to restore".
+stub2="$(mktemp -d)"
+mkdir -p "$stub2/payload"
+
+cat > "$stub2/wl-paste" <<'STUB'
+#!/usr/bin/env bash
+d="$STUB_DIR"
+case "${1:-}" in
+  --primary) exit 1 ;;
+  --list-types) cat "$d/types"; exit 0 ;;
+  --type)
+    file="$d/payload/${2//\//_}"
+    [ -s "$file" ] && { cat "$file"; exit 0; }
+    exit 1 ;;
+  *) [ -s "$d/data" ] && { cat "$d/data"; exit 0; }; exit 1 ;;
+esac
+STUB
+
+cat > "$stub2/wl-copy" <<'STUB'
+#!/usr/bin/env bash
+type=default
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) type="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+body="$(cat)"
+printf '%s %s\n' "$type" "$body" >> "$STUB_LOG"
+STUB
+
+cat > "$stub2/wtype" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+
+chmod +x "$stub2/wl-paste" "$stub2/wl-copy" "$stub2/wtype"
+
+printf 'text/plain;charset=utf-8\ntext/html\n' > "$stub2/types"
+printf 'before-rich' > "$stub2/data"
+printf 'before-rich' > "$stub2/payload/text_plain;charset=utf-8"
+printf '<b>before-rich</b>' > "$stub2/payload/text_html"
+: > "$stub2/log"
+
+STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
+  WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
+  "$ROOT/bin/pick-text" >/dev/null 2>&1
+check "restore replays a slash-bearing MIME type under its captured name" \
+  "$(grep -c '^text/html ' "$stub2/log")" "1"
+
+printf 'image/png\n' > "$stub2/types"
+: > "$stub2/data"
+printf 'PNGDATA' > "$stub2/payload/image_png"
+: > "$stub2/log"
+
+STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
+  WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
+  "$ROOT/bin/pick-text" >/dev/null 2>&1
+check_match "restore still replays when the clipboard holds no text" \
+  "$(cat "$stub2/log")" '^image/png PNGDATA$'
+
+rm -rf "$stub2"
+
+# Put the caller's selections back — including "nothing was copied", which the
+# sentinel and the cleared primary are not.
+if [ -n "$saved_clip" ]; then
+  printf '%s' "$saved_clip" | wl-copy 2>/dev/null
+else
+  wl-copy --clear 2>/dev/null
+fi
+if [ -n "$saved_primary" ]; then
+  printf '%s' "$saved_primary" | wl-copy --primary 2>/dev/null
+else
+  wl-copy --clear --primary 2>/dev/null
+fi
 
 echo
 echo "$((checks - failures))/$checks passed"

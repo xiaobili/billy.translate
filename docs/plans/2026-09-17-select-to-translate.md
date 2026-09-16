@@ -962,6 +962,13 @@ testable outside the shell."
 # inherited across exec, so the children ignore it too.
 trap '' INT
 
+# The checks below drive the real wl-clipboard, so they replace both of the
+# caller's selections. Save them first and put them back at the end: this suite
+# is run by hand on a live desktop, and a test that eats the caller's clipboard
+# is a test they stop running.
+saved_clip="$(wl-paste --no-newline 2>/dev/null || true)"
+saved_primary="$(wl-paste --primary --no-newline 2>/dev/null || true)"
+
 # Path 1: a populated primary selection is used as-is, with no clipboard
 # side effects at all.
 printf 'primary-selection-probe' | wl-copy --primary
@@ -985,12 +992,103 @@ check "the fallback path leaves the clipboard restored" "$(wl-paste --no-newline
 # is 0, so the assertion would pass no matter what pick-text returned.
 check "the fallback reports failure when nothing is selected" "$status2" "1"
 check "no text is emitted on failure" "$out2" ""
-```
+
+# ---------------------------------------------- pick-text: the restore, stubbed
+
+# The replay cannot be exercised against the real clipboard: it needs a
+# rich-text or image selection, and setting one up would itself clobber the
+# caller's. So it is driven here with stubbed client binaries, asserting on what
+# was actually replayed. Both cases are invisible to the real-wl-clipboard
+# checks above:
+#   - a MIME type containing a slash — which is every type a real clipboard
+#     advertises (text/plain;charset=utf-8, text/html, image/png). The capture
+#     sanitises the slash out of the file name, so the replay has to look it up
+#     the same way.
+#   - a clipboard with no text flavour, where the plain payload is empty and
+#     must not be mistaken for "nothing to restore".
+stub2="$(mktemp -d)"
+mkdir -p "$stub2/payload"
+
+cat > "$stub2/wl-paste" <<'STUB'
+#!/usr/bin/env bash
+d="$STUB_DIR"
+case "${1:-}" in
+  --primary) exit 1 ;;
+  --list-types) cat "$d/types"; exit 0 ;;
+  --type)
+    file="$d/payload/${2//\//_}"
+    [ -s "$file" ] && { cat "$file"; exit 0; }
+    exit 1 ;;
+  *) [ -s "$d/data" ] && { cat "$d/data"; exit 0; }; exit 1 ;;
+esac
+STUB
+
+cat > "$stub2/wl-copy" <<'STUB'
+#!/usr/bin/env bash
+type=default
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --type) type="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+body="$(cat)"
+printf '%s %s\n' "$type" "$body" >> "$STUB_LOG"
+STUB
+
+cat > "$stub2/wtype" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+
+chmod +x "$stub2/wl-paste" "$stub2/wl-copy" "$stub2/wtype"
+
+printf 'text/plain;charset=utf-8\ntext/html\n' > "$stub2/types"
+printf 'before-rich' > "$stub2/data"
+printf 'before-rich' > "$stub2/payload/text_plain;charset=utf-8"
+printf '<b>before-rich</b>' > "$stub2/payload/text_html"
+: > "$stub2/log"
+
+STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
+  WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
+  "$ROOT/bin/pick-text" >/dev/null 2>&1
+check "restore replays a slash-bearing MIME type under its captured name" \
+  "$(grep -c '^text/html ' "$stub2/log")" "1"
+
+printf 'image/png\n' > "$stub2/types"
+: > "$stub2/data"
+printf 'PNGDATA' > "$stub2/payload/image_png"
+: > "$stub2/log"
+
+STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
+  WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
+  "$ROOT/bin/pick-text" >/dev/null 2>&1
+check_match "restore still replays when the clipboard holds no text" \
+  "$(cat "$stub2/log")" '^image/png PNGDATA$'
+
+rm -rf "$stub2"
+
+# Put the caller's selections back — including "nothing was copied", which the
+# sentinel and the cleared primary are not.
+if [ -n "$saved_clip" ]; then
+  printf '%s' "$saved_clip" | wl-copy 2>/dev/null
+else
+  wl-copy --clear 2>/dev/null
+fi
+if [ -n "$saved_primary" ]; then
+  printf '%s' "$saved_primary" | wl-copy --primary 2>/dev/null
+else
+  wl-copy --clear --primary 2>/dev/null
+fi```
 
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `./tests/scripts.test.sh`
-Expected: FAIL —— `bin/pick-text: No such file or directory`；且必须确认 `the fallback path leaves the clipboard restored` 这一条在实现前是**失败**的。
+Expected: FAIL，**20/22** —— `bin/pick-text: No such file or directory`（那两条 `pick-text` 断言：
+`pick-text prefers the primary selection`、`the fallback reports failure when nothing is selected`）。
+**修正（R25）**：原文要求 `the fallback path leaves the clipboard restored` 在实现前也失败 —— 实测它**通过**，
+且必然通过：`pick-text` 不存在时没有任何东西会去动剪贴板，这条 check 的前提根本没发生。真 RED 是 2 条，不是 3 条。
+该 check 本身没问题，保留；还原路径的真实覆盖在下面新增的两条 stub 用例里。
 
 - [ ] **Step 3: 写实现**
 
@@ -1017,9 +1115,17 @@ set -uo pipefail
 POLL_INTERVAL_MS=25
 POLL_ATTEMPTS=16
 
+# Overridable so a test can drive the restore path with stubs. The replay
+# cannot be exercised against the real clipboard: it needs a rich-text or image
+# selection, which the test would have to clobber to set up. Mirrors the
+# HYPRCTL override in bin/cursor-pos.
+WL_PASTE="${WL_PASTE:-wl-paste}"
+WL_COPY="${WL_COPY:-wl-copy}"
+WTYPE="${WTYPE:-wtype}"
+
 # ------------------------------------------------------- path 1: primary
 
-primary="$(wl-paste --primary --no-newline 2>/dev/null)" && [ -n "$primary" ] && {
+primary="$("$WL_PASTE" --primary --no-newline 2>/dev/null)" && [ -n "$primary" ] && {
   printf '%s' "$primary"
   exit 0
 }
@@ -1032,16 +1138,24 @@ restored=0
 restore() {
   [ "$restored" -eq 1 ] && return
   restored=1
-  # Types are replayed in the order they were captured. A type whose data
-  # could not be read is skipped rather than copied empty, so one unreadable
-  # flavour cannot blank the whole clipboard.
+  # Types are replayed under the same sanitised name they were captured as: a
+  # MIME type contains a slash, so the file for `text/html` is `text_html`.
+  # A type whose data could not be read is skipped rather than copied empty, so
+  # one unreadable flavour cannot blank the whole clipboard.
   while IFS= read -r type; do
     [ -n "$type" ] || continue
-    [ -s "$backup/data" ] || continue
-    if [ -f "$backup/by-type/$type" ]; then
-      wl-copy --type "$type" < "$backup/by-type/$type" 2>/dev/null || true
+    safe="${type//\//_}"
+    if [ -s "$backup/by-type/$safe" ]; then
+      "$WL_COPY" --type "$type" < "$backup/by-type/$safe" 2>/dev/null || true
     fi
   done < "$backup/types"
+  # Only the last wl-copy survives: each invocation becomes the selection owner
+  # and supersedes the previous one, so the flavours above are best-effort.
+  # Text is what a text tool should leave behind and what the next paste is
+  # most likely to ask for, so it is replayed last and wins.
+  if [ -s "$backup/data" ]; then
+    "$WL_COPY" < "$backup/data" 2>/dev/null || true
+  fi
   rm -rf "$backup"
 }
 
@@ -1053,43 +1167,47 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$backup/by-type"
-wl-paste --list-types 2>/dev/null > "$backup/types" || true
+"$WL_PASTE" --list-types 2>/dev/null > "$backup/types" || true
 
 # The full payload is captured first so the "did it change" comparison below
-# has something to compare against even for non-text flavours.
-wl-paste --no-newline 2>/dev/null > "$backup/data" || true
+# has something to compare against even for non-text flavours, and so the
+# text representation can be put back last. It is empty when the clipboard
+# holds no text flavour at all — an image, say — which is not a failure.
+"$WL_PASTE" --no-newline 2>/dev/null > "$backup/data" || true
 
 while IFS= read -r type; do
   [ -n "$type" ] || continue
   safe="${type//\//_}"
-  wl-paste --type "$type" 2>/dev/null > "$backup/by-type/$safe" || rm -f "$backup/by-type/$safe"
+  "$WL_PASTE" --type "$type" 2>/dev/null > "$backup/by-type/$safe" || rm -f "$backup/by-type/$safe"
 done < "$backup/types"
 
 # Remember which flavour was the text one, if any, so the comparison uses the
 # same representation the app will actually offer.
 before="$(cat "$backup/data" 2>/dev/null || true)"
 
-wtype -M ctrl -k c -m ctrl 2>/dev/null || exit 1
+"$WTYPE" -M ctrl -k c -m ctrl 2>/dev/null || exit 1
 
 # Poll rather than sleep a fixed interval: a fast app answers on the first
 # tick, and a slow one gets the full budget.
 after=""
 for _ in $(seq "$POLL_ATTEMPTS"); do
   sleep "$(awk -v ms="$POLL_INTERVAL_MS" 'BEGIN{printf "%.3f", ms/1000}')"
-  after="$(wl-paste --no-newline 2>/dev/null || true)"
+  after="$("$WL_PASTE" --no-newline 2>/dev/null || true)"
   [ "$after" != "$before" ] && break
 done
 
 [ "$after" != "$before" ] || exit 1
 [ -n "$after" ] || exit 1
 
-printf '%s' "$after"
-```
+printf '%s' "$after"```
 
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `chmod +x bin/pick-text && ./tests/scripts.test.sh`
-Expected: 全部 `ok`，`22/22 passed`（Task 4 留下的 17 条 + 本任务新增的 5 条）
+Expected: 全部 `ok`，`24/24 passed`（Task 4 留下的 17 条 + 本任务新增的 5 条 + 还原路径的 2 条）。
+
+> 不要用 `$()` 捕获这个套件的输出：`wl-copy` 会 fork 一个持有选择区的常驻子进程，它继承命令替换的
+> stdout 管道，`out="$(./tests/scripts.test.sh)"` 永远等不到 EOF 而挂死。重定向到文件或终端（R26）。
 
 - [ ] **Step 5: 在真实应用里手动验一次**
 
