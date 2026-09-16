@@ -2349,7 +2349,7 @@ Expected: `qml syntax ok`
 
 ```bash
 omarchy restart shell && sleep 3
-journalctl --user --since "1 min ago" | grep "omarchy-shell\[$(pgrep -x omarchy-shell)\]" | grep -i "translate" | tail -20
+journalctl --user --since "1 min ago" | grep "omarchy-shell\[$(pgrep -x quickshell)\]" | grep -i "translate" | tail -20
 ```
 Expected: 无 `failed` / `Expected token` / `is not a type`。
 
@@ -2448,6 +2448,14 @@ click.
 - **Selects Chinese** → translates to English
 - **Selects anything else** → translates to Simplified Chinese
 
+## Installing
+
+Third-party plugins are not enabled by default. The id has to be in
+`~/.config/omarchy/shell.json`'s top-level `plugins` list, which
+`omarchy plugin enable billy.translate` does. Without it, summoning is refused
+— the shell logs `plugin not enabled, not summoning: billy.translate` — while
+`omarchy-shell shell toggle` still exits 0, so the failure is silent.
+
 ## Keys
 
 | Key | Action |
@@ -2532,6 +2540,7 @@ Expected: 两行都在。**若第一条没有出现**，说明 `SUPER + CTRL + T
 
 ```bash
 rm -rf ~/.local/state/omarchy/translate
+omarchy plugin enable billy.translate
 omarchy restart shell && sleep 3
 # 选中一段文字，按 SUPER + CTRL + T
 ls -l ~/.local/state/omarchy/translate/config.json
