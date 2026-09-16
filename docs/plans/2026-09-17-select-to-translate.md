@@ -1745,6 +1745,14 @@ QtObject {
   // ------------------------------------------------------------------ sending
 
   function start() {
+    // Absorbs a duplicate signal, not a changed one: the probe can emit
+    // textReady twice for one pickText() call, so start() legitimately arrives
+    // twice for the same text. A changed text cannot arrive here — while a
+    // stream runs the overlay is open and modal, so no new selection can be
+    // made, and a second hotkey press cancels rather than picks; the next pick
+    // comes from a later open(), by which point the state is idle. If a later
+    // task ever makes a concurrent selection possible, this is the line to
+    // revisit.
     if (root.streaming) return
     if (!root.config) {
       root.fail("Translation is not configured.")
