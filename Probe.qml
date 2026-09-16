@@ -52,7 +52,15 @@ QtObject {
   }
 
   property Process cursorProcess: Process {
-    command: [root.cursorScript]
+    // bash always starts, so a missing or non-executable script cannot raise
+    // QProcess::FailedToStart — which emits no `exited` and would leave a
+    // caller waiting on this probe's signals forever. It arrives as an ordinary
+    // exit code instead: 127 for a missing file, 126 for one without its exec
+    // bit, both of which onExited already reports. Process exposes no error
+    // signal to hook: the `onErrorOccurred` in the module metadata is a Method
+    // (the internal QProcess slot), not a signal, so `onErrorOccurred:` would be
+    // a load-time error the syntax gate cannot see.
+    command: ["bash", "-c", "exec \"$1\"", "bash", root.cursorScript]
     stdout: StdioCollector {
       id: cursorOut
       waitForEnd: true
@@ -74,7 +82,15 @@ QtObject {
   // The text arrives on stdout; a non-zero exit means there was no selection,
   // which is a normal outcome rather than a failure worth logging.
   property Process pickProcess: Process {
-    command: [root.pickScript]
+    // bash always starts, so a missing or non-executable script cannot raise
+    // QProcess::FailedToStart — which emits no `exited` and would leave a
+    // caller waiting on this probe's signals forever. It arrives as an ordinary
+    // exit code instead: 127 for a missing file, 126 for one without its exec
+    // bit, both of which onExited already reports. Process exposes no error
+    // signal to hook: the `onErrorOccurred` in the module metadata is a Method
+    // (the internal QProcess slot), not a signal, so `onErrorOccurred:` would be
+    // a load-time error the syntax gate cannot see.
+    command: ["bash", "-c", "exec \"$1\"", "bash", root.pickScript]
     stdout: StdioCollector {
       id: pickOut
       waitForEnd: true
