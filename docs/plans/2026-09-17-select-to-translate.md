@@ -741,12 +741,25 @@ check_match "cursor-pos names a real monitor" "$mon" '^\{'
 # physical, and the script reports width/scale by design. Comparing to the raw
 # value passes only where scale is 1, and would tempt a future red run into
 # "fixing" correct code.
+#
+# The transform swap is the same one bin/cursor-pos applies: a rotated panel
+# (transform 1/3/5/7) presents its logical extents swapped against the mode
+# width/height, so on a portrait display the reported width is height/scale.
+# Comparing against the unswapped numbers would fail against correct code the
+# first time this suite ran on one, and this machine reports transform 0.
+logical_extents() { # logical_extents <monitor-json> -> "<logical-w> <logical-h>"
+  printf '%s' "$1" | jq -r '
+    (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
+      then (.height / .scale) else (.width / .scale) end | floor) as $w
+    | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
+      then (.width / .scale) else (.height / .scale) end | floor) as $h
+    | "\($w) \($h)"'
+}
+logical="$(logical_extents "$mon")"
 check "reported width is the logical width" \
-  "$(printf '%s' "$out" | awk '{print $4}')" \
-  "$(printf '%s' "$mon" | jq -r '((.width / .scale) | floor)')"
+  "$(printf '%s' "$out" | awk '{print $4}')" "${logical%% *}"
 check "reported height is the logical height" \
-  "$(printf '%s' "$out" | awk '{print $5}')" \
-  "$(printf '%s' "$mon" | jq -r '((.height / .scale) | floor)')"
+  "$(printf '%s' "$out" | awk '{print $5}')" "${logical##* }"
 
 lx="$(printf '%s' "$out" | awk '{print $2}')"
 ly="$(printf '%s' "$out" | awk '{print $3}')"
@@ -757,15 +770,43 @@ check_match "local y is inside the screen" "$(awk -v a="$ly" -v h="$(printf '%s'
 # reproduce hyprctl's global position. Both sides are logical, so there is NO
 # scale factor in this relationship — multiplying by scale here would encode
 # the very bug this suite exists to catch, and would pass anyway at scale 1.
-global="$(hyprctl cursorpos | tr -d ' ')"
-gx="${global%,*}"
-gy="${global#*,}"
-ox="$(printf '%s' "$mon" | jq -r '.x')"
-oy="$(printf '%s' "$mon" | jq -r '.y')"
+#
+# Read a FRESH run for this comparison, and only trust it when the global
+# position is the same on both sides of that run. The pointer is alive while
+# the suite runs, so a single sample taken after the run can disagree with what
+# the run itself saw; the check then reports "the cursor moved" as a conversion
+# failure (it did exactly that once: expected 834, actual 815). Retrying while
+# the two readings disagree is not slowness to be "simplified" out — without it
+# a moving pointer fails correct code. A wrong conversion still fails here:
+# every attempt reconstructs the same wrong number.
+live_out=""
+live_global=""
+for _ in $(seq 5); do
+  live_before="$(hyprctl cursorpos | tr -d ' ')"
+  live_out="$("$ROOT/bin/cursor-pos")"
+  live_after="$(hyprctl cursorpos | tr -d ' ')"
+  if [ "$live_before" = "$live_after" ]; then
+    live_global="$live_before"
+    break
+  fi
+done
+# Every attempt saw the pointer move. Compare against the reading taken before
+# the last run rather than dropping the comparison and passing vacuously.
+[ -n "$live_global" ] || live_global="$live_before"
+
+# The origin must come from the monitor the run itself named, not from the
+# earlier $mon: a retry may have caught the pointer on a different screen.
+live_mon="$(hyprctl -j monitors | jq -c --arg n "$(printf '%s' "$live_out" | awk '{print $1}')" '.[] | select(.name==$n)')"
+llx="$(printf '%s' "$live_out" | awk '{print $2}')"
+lly="$(printf '%s' "$live_out" | awk '{print $3}')"
+lox="$(printf '%s' "$live_mon" | jq -r '.x')"
+loy="$(printf '%s' "$live_mon" | jq -r '.y')"
+lgx="${live_global%,*}"
+lgy="${live_global#*,}"
 check "local x reconstructs the global position" \
-  "$(awk -v l="$lx" -v o="$ox" 'BEGIN{printf "%d", l + o}')" "$gx"
+  "$(awk -v l="$llx" -v o="$lox" 'BEGIN{printf "%d", l + o}')" "$lgx"
 check "local y reconstructs the global position" \
-  "$(awk -v l="$ly" -v o="$oy" 'BEGIN{printf "%d", l + o}')" "$gy"
+  "$(awk -v l="$lly" -v o="$loy" 'BEGIN{printf "%d", l + o}')" "$lgy"
 
 # ------------------------------------------------- scaled / multi-monitor
 # A scale-1 single-monitor machine cannot discriminate this conversion at all:
@@ -1079,7 +1120,8 @@ if [ -n "$saved_primary" ]; then
   printf '%s' "$saved_primary" | wl-copy --primary 2>/dev/null
 else
   wl-copy --clear --primary 2>/dev/null
-fi```
+fi
+```
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -1199,7 +1241,8 @@ done
 [ "$after" != "$before" ] || exit 1
 [ -n "$after" ] || exit 1
 
-printf '%s' "$after"```
+printf '%s' "$after"
+```
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -2267,7 +2310,9 @@ PanelWindow {
 
   function copyTranslation() {
     if (transport.output === "") return
-    Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash", "wl-copy", "--", transport.output])
+    // argv, not a shell: the text is its own element, so `-l` bought nothing
+    // and cost a profile source on every copy.
+    Quickshell.execDetached(["wl-copy", "--", transport.output])
     root.copied = true
     copiedTimer.restart()
   }
@@ -2547,7 +2592,11 @@ a 0600 config file, because `/proc/<pid>/cmdline` is world-readable.
 
 The primary selection first — that is what a mouse drag fills, and reading it
 touches nothing. Only when it is empty does the plugin synthesise `Ctrl+C` and
-read the clipboard, restoring the original afterwards.
+read the clipboard, restoring the *text* flavour afterwards. Nothing richer
+comes back as it was: `wl-copy` takes one type per call and each call becomes
+the selection owner, so only the flavour replayed last survives — and that is
+deliberately the text one, which is why a rich-text clipboard returns as plain
+text.
 
 **Known side effect:** on that fallback path the selection may land in the
 omarchy clipboard history. The synthetic copy and its undo are separate

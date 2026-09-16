@@ -117,12 +117,14 @@ stdout 输出取到的文本；取不到则 stdout 为空且退出码非 0。
 
 1. `wl-paste --primary --no-newline` → 非空即输出并退出。**这条路覆盖绝大多数应用，零副作用。**
 2. 否则走兜底：
-   1. 按 `wl-paste --list-types` 逐类型**备份**整个剪贴板到临时目录 —— 备份类型而非只备份文本，这样图片、富文本也能原样还原
+   1. 按 `wl-paste --list-types` 逐类型**备份**整个剪贴板到临时目录 —— 备份类型而非只备份文本，这样每种 flavour 都还在（**但还原不等于原样**，见下）
    2. `wtype -M ctrl -k c -m ctrl`
    3. 每 25ms 轮询 `wl-paste --no-newline`，上限 ~400ms，直到内容 ≠ 备份内容
-   4. **还原剪贴板**（逐类型 `wl-copy --type`）
+   4. **还原剪贴板**（逐类型 `wl-copy --type`，文本 payload **最后**重放）
    5. 输出取到的文本
 3. 任何一步失败都要走还原路径后退出非 0（`trap` 或显式清理）。
+
+> **为什么「原样还原」做不到（2026-09-17 修正）**：`wl-copy` **每次调用只接受一个类型**，而每次调用都会成为 selection owner、顶掉上一次 —— 所以 N 个 flavour 重放下来只有**最后一个**存活。`bin/pick-text` 因此把文本 payload 放在最后重放（文本是文本工具最该留下的东西），代价是：富文本剪贴板回来时是**纯文本**。这是 selection owner 模型的结构性限制，不是可以绕开的实现取舍 —— 代码有意如此。
 
 > **选项名注意**：wl-clipboard 2.3.0 里**没有 `--clipboard` 这个选项** —— 剪贴板是默认目标，`--primary` 才是切到主选择区。所以是 `wl-paste`（剪贴板）与 `wl-paste --primary`（主选择区）的对比，不是两个对称的长选项。此机已实测确认。
 
@@ -180,11 +182,15 @@ QML 侧：按屏幕名匹配 `Quickshell.screens`，绑到 `PanelWindow.screen`�
 - **垂直**：`y = 局部y + GAP`；若 `y + 卡片高 + EDGE > 屏高` 则翻到上方 `y = 局部y - 卡片高 - GAP`；若翻转后 `y < EDGE` 则夹紧到 `EDGE`
 - **内容变高时重算** —— 译文是流式长出来的，卡片高度会变。夹紧逻辑必须绑定卡片高度，否则长译文溢出屏幕底
 
-### 缓存
+### 无缓存（2026-09-17 修正）
 
-显示器列表不常变：**启动时拉一次** `hyprctl -j monitors` 缓存，召唤时只跑 `cursorpos`。若光标落在缓存中不存在的屏幕上（热插拔 / 改排列），补拉一次并更新缓存。
+`bin/cursor-pos` **每次调用都重新拉取**：`hyprctl cursorpos` 与 `hyprctl -j monitors` 各跑一次，显示器列表不缓存。
 
-召唤路径成本：一次进程，~10-20ms。
+无状态是更好的形状：原设计里「启动时缓存 + 未命中补拉」的那条分支根本不存在，也就不可能出现「拿一份陈旧的布局去换算坐标」——热插拔或改排列之后的第一次召唤就是对的。
+
+召唤路径成本：两次进程，~10-20ms。
+
+> 代码有意如此：这是与本文档原先描述的**偏离**，实现方选择了无状态那条路，代码为准。
 
 ### 风险
 
@@ -213,7 +219,7 @@ idle ──open()──> picking ──取到文本──> translating ──流
 
 ```
 ┌─────────────────────────────────────┐
-│ EN → 中文                    ⧉   ✕ │  ← 方向标签 / 复制 / 关闭
+│ → 中文                       ⧉   ✕ │  ← 方向标签 / 复制 / 关闭
 ├─────────────────────────────────────┤
 │ The quick brown fox jumps over the  │  ← 原文，暗色，最多 3 行，超出省略
 │ lazy dog                            │
@@ -222,6 +228,8 @@ idle ──open()──> picking ──取到文本──> translating ──流
 │                                     │
 └─────────────────────────────────────┘
 ```
+
+> 方向标签由 `Overlay.qml` 的 `labelFor()` 生成：原文含中文时为 `中文 → EN`，否则为 `→ 中文` —— 所以上图（英文原文）**不写「EN」**。代码有意如此：非中文原文可能是任何语言，标一个「EN」是猜的。
 
 - 宽度固定 `Style.space(420)`（约 3 行正文宽，长句不会拉成一条），高度 `auto` 但夹在 `[Style.space(120), Style.space(420)]` 之间：下限避免首帧跳动，上限封顶后译文区滚动
 - 卡片用 `BorderSurface`，圆角取 `Style.cornerRadius`，边框取 `Border.surfaceSpec(...)` —— 与 shell 里其他卡片同源
@@ -282,16 +290,20 @@ Rules:
 
 ## 11. 错误处理
 
+文案以代码为准，全部为英文（`Transport.qml` 的 `fail(...)`、`Probe.qml` 的 `textFailed` / `cursorFailed`、`Translate.js` 的 `errorText()`）：
+
 | 情况 | 气泡表现 |
 |---|---|
-| 取不到文本 | 「没有检测到选中文字」 |
-| `baseUrl` 或 `model` 为空 | 「翻译未配置」+ 配置文件的绝对路径 |
-| curl 退出码非 0 | 错误摘要（stderr tail） |
+| 取不到文本 | `No text selected.` |
+| `baseUrl` 或 `model` 为空 | `Translation is not configured.` |
+| curl 退出码非 0 | 错误摘要（`stderr` tail） |
 | HTTP ≥ 400 | 状态码 + body tail（截断到 2000 字符，与 billy.chat 一致） |
-| 超时 | 「请求超时」 |
+| 超时 | `Timed out after <timeoutSec>s.` |
 | 流中断（无 `[DONE]`） | **保留已收到的部分译文**，下方加一行提示 |
 
 部分译文要保留 —— 用户已经读到的内容是有效产出，不能因为收尾失败就丢掉。
+
+> 代码有意如此：气泡文案一律英文；`baseUrl` / `model` 为空时只说 `Translation is not configured.`，不再附带配置文件的绝对路径。
 
 ## 12. 验证
 

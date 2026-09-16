@@ -54,7 +54,11 @@ a 0600 config file, because `/proc/<pid>/cmdline` is world-readable.
 
 The primary selection first — that is what a mouse drag fills, and reading it
 touches nothing. Only when it is empty does the plugin synthesise `Ctrl+C` and
-read the clipboard, restoring the original afterwards.
+read the clipboard, restoring the *text* flavour afterwards. Nothing richer
+comes back as it was: `wl-copy` takes one type per call and each call becomes
+the selection owner, so only the flavour replayed last survives — and that is
+deliberately the text one, which is why a rich-text clipboard returns as plain
+text.
 
 **Known side effect:** on that fallback path the selection may land in the
 omarchy clipboard history. The synthetic copy and its undo are separate

@@ -114,7 +114,9 @@ PanelWindow {
 
   function copyTranslation() {
     if (transport.output === "") return
-    Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash", "wl-copy", "--", transport.output])
+    // argv, not a shell: the text is its own element, so `-l` bought nothing
+    // and cost a profile source on every copy.
+    Quickshell.execDetached(["wl-copy", "--", transport.output])
     root.copied = true
     copiedTimer.restart()
   }
