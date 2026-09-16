@@ -54,60 +54,60 @@ ly="$(printf '%s' "$out" | awk '{print $3}')"
 check_match "local x is inside the screen" "$(awk -v a="$lx" -v w="$(printf '%s' "$out" | awk '{print $4}')" 'BEGIN{print (a>=0 && a<=w) ? "yes" : "no"}')" '^yes$'
 check_match "local y is inside the screen" "$(awk -v a="$ly" -v h="$(printf '%s' "$out" | awk '{print $5}')" 'BEGIN{print (a>=0 && a<=h) ? "yes" : "no"}')" '^yes$'
 
-# The invariant that matters: local + monitor origin must reproduce hyprctl's
-# global cursor position (scale is 1 on this machine).
+# The invariant that matters: the local offset plus the monitor's origin must
+# reproduce hyprctl's global position. Both sides are logical, so there is NO
+# scale factor in this relationship — multiplying by scale here would encode
+# the very bug this suite exists to catch, and would pass anyway at scale 1.
 global="$(hyprctl cursorpos | tr -d ' ')"
 gx="${global%,*}"
 gy="${global#*,}"
 ox="$(printf '%s' "$mon" | jq -r '.x')"
 oy="$(printf '%s' "$mon" | jq -r '.y')"
-scale="$(printf '%s' "$mon" | jq -r '.scale')"
 check "local x reconstructs the global position" \
-  "$(awk -v l="$lx" -v s="$scale" -v o="$ox" 'BEGIN{printf "%d", l*s + o}')" "$gx"
+  "$(awk -v l="$lx" -v o="$ox" 'BEGIN{printf "%d", l + o}')" "$gx"
 check "local y reconstructs the global position" \
-  "$(awk -v l="$ly" -v s="$scale" -v o="$oy" 'BEGIN{printf "%d", l*s + o}')" "$gy"
+  "$(awk -v l="$ly" -v o="$oy" 'BEGIN{printf "%d", l + o}')" "$gy"
 
-# ---------------------------------------------- cursor-pos, scaled monitors
-# Everything above runs against this machine, where a single scale-1 screen
-# makes every coordinate space collapse onto the same numbers -- which is
-# exactly why a conversion that confuses those spaces passes all of it. The
-# stub below is a layout where the spaces differ: a scale-2 screen whose 3840
-# physical columns are only 1920 logical ones, sitting left of a scale-1 one.
-#
-# Because hyprctl reports width/height in physical mode pixels but x/y in the
-# logical layout space, a conversion that compares the logical cursor against
-# physical extents picks the wrong screen here, and one that divides the
-# already-logical cursor by the scale reports the wrong local coordinates.
-stubdir="$(mktemp -d)"
-trap 'rm -rf "$stubdir"' EXIT
-cat > "$stubdir/hyprctl" <<'STUB'
+# ------------------------------------------------- scaled / multi-monitor
+# A scale-1 single-monitor machine cannot discriminate this conversion at all:
+# every coordinate space coincides and the scale factor is an identity, so a
+# wrong implementation and a right one produce byte-identical output. These
+# cases stub hyprctl with a two-monitor mixed-scale layout to exercise the
+# arithmetic for real. DP-1 is physical 3840x2160 at scale 2 (logical
+# 1920x1080 at 0,0); HDMI-A-1 is physical 1920x1080 at scale 1 (logical
+# 1920x1080 at 1920,0).
+stub="$(mktemp -d)"
+cat > "$stub/hyprctl" <<'STUB'
 #!/usr/bin/env bash
-case "${1:-}" in
+case "$1" in
   cursorpos) printf '%s\n' "$STUB_CURSOR" ;;
-  -j)        printf '%s\n' "$STUB_MONITORS" ;;
-  *)         exit 1 ;;
+  -j) printf '%s\n' "$STUB_MONITORS" ;;
+  *) exit 1 ;;
 esac
 STUB
-chmod +x "$stubdir/hyprctl"
+chmod +x "$stub/hyprctl"
+export STUB_MONITORS='[{"name":"DP-1","x":0,"y":0,"width":3840,"height":2160,"scale":2,"transform":0},
+{"name":"HDMI-A-1","x":1920,"y":0,"width":1920,"height":1080,"scale":1,"transform":0}]'
 
-STUB_MONITORS='[
-  {"name": "DP-1",     "x": 0,    "y": 0, "width": 3840, "height": 2160, "scale": 2, "transform": 0},
-  {"name": "HDMI-A-1", "x": 1920, "y": 0, "width": 1920, "height": 1080, "scale": 1, "transform": 0}
-]'
-
-pos() { # pos <global cursor> -> the script's line, under the stub layout
-  STUB_CURSOR="$1" STUB_MONITORS="$STUB_MONITORS" \
-    HYPRCTL="$stubdir/hyprctl" "$ROOT/bin/cursor-pos"
+scaled() { # scaled <cursor-x> <cursor-y> -> the script's single output line
+  STUB_CURSOR="$1, $2" HYPRCTL="$stub/hyprctl" "$ROOT/bin/cursor-pos"
 }
 
-check "scaled layout: cursor at 2500 is on the second screen, not the first" \
-  "$(pos '2500, 500')" "HDMI-A-1 580 500 1920 1080"
-check "scaled layout: scale-2 screen reports logical size and logical coords" \
-  "$(pos '900, 400')" "DP-1 900 400 1920 1080"
-check "scaled layout: the boundary column stays on the left screen" \
-  "$(pos '1919, 0')" "DP-1 1919 0 1920 1080"
-check "scaled layout: the next column starts the right screen" \
-  "$(pos '1920, 0')" "HDMI-A-1 0 0 1920 1080"
+# The cursor is on the right-hand screen. A containment test that uses the
+# PHYSICAL width lets the left screen swallow it (0 + 3840 > 2500) and then
+# reports the wrong monitor with wrong offsets.
+check "scaled layout: picks the screen the cursor is actually on" \
+  "$(scaled 2500 500)" "HDMI-A-1 580 500 1920 1080"
+# On the scaled screen: offsets are logical, and the reported size must be the
+# logical 1920x1080, not the physical 3840x2160.
+check "scaled layout: reports logical offsets and logical screen size" \
+  "$(scaled 900 400)" "DP-1 900 400 1920 1080"
+check "scaled layout: the boundary stays on the left screen" \
+  "$(scaled 1919 0)" "DP-1 1919 0 1920 1080"
+check "scaled layout: the boundary flips to the right screen" \
+  "$(scaled 1920 0)" "HDMI-A-1 0 0 1920 1080"
+
+rm -rf "$stub"
 
 echo
 echo "$((checks - failures))/$checks passed"
