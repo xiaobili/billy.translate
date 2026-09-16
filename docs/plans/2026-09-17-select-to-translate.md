@@ -1711,6 +1711,17 @@ QtObject {
       .replace(/"/g, "\\\"")
       .replace(/[\r\n]+/g, " ")
   }
+  // Same as quote(), except that a newline survives as curl's own \n
+  // escape: curl reads it back as a real line break. The HTTP status marker
+  // needs those breaks — folded to spaces by quote() it glues onto the
+  // response body and parseHttpMarker reads -1, silently disabling every
+  // status branch of errorText.
+  function curlEscape(value) {
+    return String(value === undefined || value === null ? "" : value)
+      .replace(/\\/g, "\\\\")
+      .replace(/"/g, "\\\"")
+      .replace(/\r?\n/g, "\\n")
+  }
 
   function curlConfigText() {
     var lines = []
@@ -1727,7 +1738,7 @@ QtObject {
     lines.push("no-buffer")
     // The status marker is the last line curl writes, so it survives even when
     // the body is an error document rather than a stream.
-    lines.push("write-out = \"" + root.quote(Translate.httpMarker()) + "\"")
+    lines.push("write-out = \"" + root.curlEscape(Translate.httpMarker()) + "\"")
     return lines.join("\n") + "\n"
   }
 
