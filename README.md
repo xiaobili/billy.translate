@@ -45,6 +45,11 @@ run from the chat plugin's config:
 | `maxTokens` | `0` means "do not send the field" |
 | `timeoutSec` | Request timeout, `60` by default |
 
+The request disables the provider's thinking mode (`thinking: {type: "disabled"}`).
+This tool only translates, and on DeepSeek thinking mode also ignores
+`temperature` — so leaving it on costs latency and tokens while quietly making
+the setting above do nothing.
+
 The API key deliberately does **not** live in `~/.config/omarchy/shell.json`:
 plugin settings there are inline on the bar entry, and the shell rewrites that
 file on every layout change. It is also kept out of `argv` — curl reads it from

@@ -284,6 +284,10 @@ Rules:
 
 `temperature: 0.2` —— 翻译要确定性，不要创造力。
 
+请求体固定带 `{"thinking": {"type": "disabled"}}`。`deepseek-flash` 及同族模型**默认开启思考**（effort
+`high`），而按 DeepSeek 的接口文档，思考模式下**`temperature` 会被忽略** —— 开着思考既费时费 token，
+又让上面那条确定性失效。翻译不需要思维链，因此显式关闭。
+
 ### 目录创建的坑
 
 `FileView` 写入不存在的目录会以 `FileNotFound` 失败，且在 `printErrors: false` 下**完全静默**。必须先 `Process` 跑 `mkdir -p`，并且**把首次写入门控在该进程的 `onExited` 上**。读一个不存在的文件触发的是 `loadFailed` 而不是空的 `loaded`，同样要处理。

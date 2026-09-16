@@ -47,7 +47,14 @@ function buildBody(config, text) {
       { role: "system", content: system },
       { role: "user", content: text === undefined || text === null ? "" : String(text) }
     ],
-    stream: true
+    stream: true,
+    // Translation wants the answer, not the model's chain of thought.
+    // `deepseek-flash` enables thinking by default at effort "high", which
+    // costs latency and tokens and — per DeepSeek's API docs — also makes the
+    // endpoint ignore `temperature`, silently discarding the determinism this
+    // tool asks for. An endpoint that rejects unknown body fields would need
+    // this line removed.
+    thinking: { type: "disabled" }
   }
   if (config && typeof config.temperature === "number" && config.temperature >= 0) {
     body.temperature = config.temperature

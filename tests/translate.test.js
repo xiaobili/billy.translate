@@ -22,6 +22,10 @@ check("exactly one system and one user turn", body.messages.length, 2)
 check("system turn comes first", body.messages[0].role, "system")
 check("user turn carries the text verbatim", body.messages[1].content, "hello")
 check("temperature is sent", body.temperature, 0.2)
+// Translation wants the answer, not the model's chain of thought: the
+// configured model enables thinking by default, and thinking mode also makes
+// the API ignore `temperature`.
+check("thinking is disabled", body.thinking && body.thinking.type, "disabled")
 // 0 means "do not send the field": some servers reject it, and the provider
 // default is a better ceiling than an arbitrary one.
 check("max_tokens is omitted when 0", "max_tokens" in body, false)
