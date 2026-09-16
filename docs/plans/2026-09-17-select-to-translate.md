@@ -2379,7 +2379,7 @@ Expected: 无 `failed` / `Expected token` / `is not a type`。
 | 8 | 点击气泡外的暗区 | 关闭 |
 | 9 | 点复制按钮 | 图标变 `✓`，`wl-paste` 得到译文 |
 | 10 | `omarchy-shell billy.translate copy` | 同样复制译文 |
-| 11 | 什么都不选，按快捷键 | 气泡显示「没有检测到选中文字」 |
+| 11 | 什么都不选，按快捷键 | 气泡显示 `No text selected.` —— `Probe.qml` 发出的就是这个英文原文（原表写作中文是计划作者的转述，不是代码里的字符串） |
 | 12 | 把 `config.json` 的 `apiKey` 改错，再翻译 | 气泡显示 `Authentication failed` |
 | 13 | 在 Electron 应用（VS Code）里选词 | 走兜底路径，仍能取到；之后 `wl-paste` 是原内容 |
 | 14 | 流式进行中按 `Esc` | 关闭；已收到的部分不崩 |
