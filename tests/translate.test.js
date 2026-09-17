@@ -84,6 +84,7 @@ check("a long detail is truncated to 300 chars",
 check("empty text labels as non-Chinese", T.directionLabel(""), "→ 中文")
 check("Chinese text labels the other way", T.directionLabel("你好，世界"), "中文 → EN")
 check("English text labels to Chinese", T.directionLabel("hello world"), "→ 中文")
-check("a single CJK character is enough", T.directionLabel("hello 你好"), "中文 → EN")
+check("CJK among Latin text is enough", T.directionLabel("hello 你好"), "中文 → EN")
+check("one CJK character alone is enough", T.directionLabel("好"), "中文 → EN")
 
 report()

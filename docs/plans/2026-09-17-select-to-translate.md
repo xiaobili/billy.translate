@@ -1,5 +1,8 @@
 # 划词翻译插件（billy.translate）实现计划
 
+> **本文已关闭（2026-09-17）**：输入翻译功能见 `2026-09-17-input-translation.md`。此后改动只同步到新计划，
+> 本文内嵌的文件副本不再随之更新 —— 它们是那次实现的历史快照。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在 Omarchy 桌面选中文本后按 `SUPER + CTRL + U`，在光标位置的气泡里看到流式译文，并可一键复制。

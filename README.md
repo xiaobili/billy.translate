@@ -20,6 +20,7 @@ Third-party plugins are not enabled by default. The id has to be in
 | Key | Action |
 |---|---|
 | `ALT + D` | Translate the selection; press again to dismiss |
+| `ALT + I` | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
 | *(unbound)* | Copy the translation — use the bubble's copy button, or the IPC verb below |
 | `Esc`, or click outside | Dismiss |
 
@@ -30,6 +31,17 @@ o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.trans
 -- Copy has no chord on this machine: use the bubble's copy button,
 -- or `omarchy-shell billy.translate copy`.
 ```
+
+## Typing text
+
+`ALT + I` opens the bubble with an input field instead of the
+selection. Enter translates, Shift+Enter adds a line, and editing the text and
+pressing Enter again re-translates — the request in flight is cancelled first.
+A result whose text you have since changed is dimmed, so an old translation
+never reads as the current one.
+
+The draft lives in memory: it survives closing the bubble and comes back
+selected next time, but a shell restart clears it.
 
 ## Configuration
 
@@ -81,6 +93,7 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 3. Some apps do not populate the primary selection at all, so they always take
    the fallback path.
 4. There is no settings UI. Edit the JSON.
+5. The draft in the input field is in memory only — a shell restart clears it.
 
 ## Tests
 
