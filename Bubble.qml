@@ -23,8 +23,11 @@ Item {
   property string inputText: ""
   // The input area's own cap, and what Task 3's budget reads. `inputArea` is
   // the TextArea further down this same file.
+  readonly property int inputInset: Style.space(6)
   readonly property int maxInputHeight: Style.space(72)
-  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight, root.maxInputHeight) : 0
+  // The box is the text plus its inset, capped; past the cap the Flickable
+  // scrolls instead of the box growing.
+  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight + 2 * root.inputInset, root.maxInputHeight) : 0
   signal submitRequested()
 
   signal copyRequested()
@@ -117,33 +120,65 @@ Item {
         color: Color.popups.background
         borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
-        TextArea {
-          id: inputArea
+        // A TextArea carries no scroll state of its own — no contentY, no
+        // internal Flickable — so capping its height would simply cut the caret
+        // off: typing past the cap goes blind. The Flickable is the scroll
+        // carrier, and the caret-follow below is what keeps the line you are
+        // typing visible. It hangs off the caret's own movement, because
+        // contentY only changes when something scrolls it. (billy.chat's
+        // Composer hooks onContentYChanged for this; that fires on scrolling,
+        // not on typing, so it does not actually follow the caret.)
+        Flickable {
+          id: inputView
           anchors.fill: parent
-          anchors.margins: Style.space(6)
-          placeholderText: "Type or paste text — Enter to translate"
-          color: Color.foreground
-          wrapMode: TextArea.Wrap
-          textFormat: TextEdit.PlainText
-          focus: root.mode === "input"
-          background: null
-          font.family: Style.font.resolvedFamily
-          font.pixelSize: Style.font.body
-          onTextChanged: {
-            root.inputText = text
-            root.inputChanged()
-          }
-          Keys.onPressed: function (event) {
-            if (event.key === Qt.Key_Escape) {
-              event.accepted = true
-              root.closeRequested()
-              return
+          anchors.margins: root.inputInset
+          contentWidth: width
+          contentHeight: inputArea.contentHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+
+          TextArea {
+            id: inputArea
+            width: inputView.width
+            placeholderText: "Type or paste text — Enter to translate"
+            color: Color.foreground
+            wrapMode: TextArea.Wrap
+            textFormat: TextEdit.PlainText
+            focus: root.mode === "input"
+            background: null
+            // The Flickable's margins are the inset; the control's own padding
+            // would add a style-dependent number on top of it.
+            padding: 0
+            leftPadding: 0
+            rightPadding: 0
+            topPadding: 0
+            bottomPadding: 0
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.body
+            onTextChanged: {
+              root.inputText = text
+              root.inputChanged()
             }
-            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              // Shift+Enter falls through to TextArea's own newline.
-              if (event.modifiers & Qt.ShiftModifier) return
-              event.accepted = true
-              root.submitRequested()
+            onCursorRectangleChanged: {
+              if (!activeFocus) return
+              var caret = cursorRectangle
+              if (caret.y < inputView.contentY) inputView.contentY = caret.y
+              else if (caret.y + caret.height > inputView.contentY + inputView.height)
+                inputView.contentY = caret.y + caret.height - inputView.height
+            }
+            Keys.onPressed: function (event) {
+              if (event.key === Qt.Key_Escape) {
+                event.accepted = true
+                root.closeRequested()
+                return
+              }
+              if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                // Shift+Enter falls through to TextArea's own newline.
+                if (event.modifiers & Qt.ShiftModifier) return
+                event.accepted = true
+                root.submitRequested()
+              }
             }
           }
         }

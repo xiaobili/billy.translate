@@ -30,6 +30,11 @@ PanelWindow {
   // the new request has to wait for finished() rather than pressing start()
   // into the streaming guard.
   property bool pendingSubmit: false
+  // Set when a mode switch cancels a stream: that cancel's finished() is not a
+  // result, and painting a verdict from it would put a false "No translation
+  // returned." under whatever the bubble is doing now — or a stray
+  // phase="error", which would make the surface appear during the pick window.
+  property bool discardNextFinish: false
 
   property var cursorPos: null
   property string selectedText: ""
@@ -112,12 +117,17 @@ PanelWindow {
       root.mode = "input"
       // Nothing to pick: the surface can appear at once.
       root.phase = "empty"
+      root.pendingSubmit = false
+      root.discardNextFinish = transport.streaming
       transport.cancel()
+      root.refreshInputLabel()
       Qt.callLater(function () { bubble.selectAllInput() })
       return
     }
     root.mode = "selection"
     root.phase = "picking"
+    root.pendingSubmit = false
+    root.discardNextFinish = transport.streaming
     transport.cancel()
     probe.queryCursor()
     probe.pickText()
@@ -161,6 +171,14 @@ PanelWindow {
     transport.start()
   }
 
+  // The label follows the input, but goes blank rather than claiming a
+  // direction for an empty field (walkthrough row 1), and is refreshed when a
+  // restored draft reopens (row 8) rather than waiting for the next keystroke.
+  function refreshInputLabel() {
+    root.directionLabel = root.inputText.trim() === ""
+      ? "" : Translate.directionLabel(root.inputText)
+  }
+
   function copyTranslation() {
     if (transport.output === "") return
     // argv, not a shell: the text is its own element, so `-l` bought nothing
@@ -182,6 +200,7 @@ PanelWindow {
     pluginDir: root.pluginDir
     onCursorReady: function (pos) { root.cursorPos = pos }
     onCursorFailed: function (message) {
+      if (!root.opened || root.mode !== "selection") return
       root.failureText = message
       root.phase = "empty"
     }
@@ -189,14 +208,14 @@ PanelWindow {
       // A second hotkey press inside the pick window takes the toggle's hide
       // branch, but the pick is already in flight: without this, its late
       // textReady starts a full translation behind a closed overlay.
-      if (!root.opened) return
+      if (!root.opened || root.mode !== "selection") return
       root.selectedText = text
       root.directionLabel = Translate.directionLabel(text)
       root.phase = "translating"
       transport.start()
     }
     onTextFailed: function (message) {
-      if (!root.opened) return
+      if (!root.opened || root.mode !== "selection") return
       root.failureText = message
       root.phase = "empty"
     }
@@ -211,6 +230,10 @@ PanelWindow {
     // whatever has arrived, so there is no need to promote a partial answer
     // to "done" and lose the distinction.
     onFinished: function (outcome) {
+      if (root.discardNextFinish) {
+        root.discardNextFinish = false
+        return
+      }
       if (root.pendingSubmit) {
         root.pendingSubmit = false
         root.failureText = ""
@@ -257,7 +280,7 @@ PanelWindow {
     copied: root.copied
     onCopyRequested: root.copyTranslation()
     onCloseRequested: root.close()
-    onInputChanged: root.directionLabel = Translate.directionLabel(root.inputText)
+    onInputChanged: root.refreshInputLabel()
     onSubmitRequested: root.submitInput()
   }
 
