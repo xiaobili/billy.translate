@@ -222,7 +222,6 @@ character still counts as Chinese."
     root.phase = "translating"
     transport.start()
   }
-```
 
   // The label follows the input, but goes blank rather than claiming a
   // direction for an empty field (walkthrough row 1), and is refreshed when a
@@ -231,6 +230,7 @@ character still counts as Chinese."
     root.directionLabel = root.inputText.trim() === ""
       ? "" : Translate.directionLabel(root.inputText)
   }
+```
 
 `transport.text` 的绑定改为随模式取源：
 
