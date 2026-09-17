@@ -215,6 +215,8 @@ idle ──open()──> picking ──取到文本──> translating ──流
 
 `close()`：取消进行中的 curl、清空状态、回到 `idle`。
 
+**与 `mode` 正交**（第 15 节）：`mode` 取 `selection` | `input`，相位集合不因它增减。输入态复用 `empty`（尚无译文）、`translating`、`done`、`error`；`picking` 在输入态不会出现，因为不调用 `bin/pick-text`。
+
 ## 9. 气泡内容与交互
 
 ```
@@ -229,7 +231,7 @@ idle ──open()──> picking ──取到文本──> translating ──流
 └─────────────────────────────────────┘
 ```
 
-> 方向标签由 `Overlay.qml` 的 `labelFor()` 生成：原文含中文时为 `中文 → EN`，否则为 `→ 中文` —— 所以上图（英文原文）**不写「EN」**。代码有意如此：非中文原文可能是任何语言，标一个「EN」是猜的。
+> 方向标签由 `Translate.js` 的纯函数 `directionLabel(text)` 生成（第 15 节前它内联在 `Overlay.qml` 的 `labelFor()` 里）：原文含中文时为 `中文 → EN`，否则为 `→ 中文` —— 所以上图（英文原文）**不写「EN」**。代码有意如此：非中文原文可能是任何语言，标一个「EN」是猜的。
 
 - 宽度固定 `Style.space(420)`（约 3 行正文宽，长句不会拉成一条），高度 `auto` 但夹在 `[Style.space(120), Style.space(420)]` 之间：下限避免首帧跳动，上限封顶后译文区滚动
 - 卡片用 `BorderSurface`，圆角取 `Style.cornerRadius`，边框取 `Border.surfaceSpec(...)` —— 与 shell 里其他卡片同源
@@ -243,6 +245,7 @@ idle ──open()──> picking ──取到文本──> translating ──流
 | 再按一次快捷键 | 同上（`toggle`） |
 | 点击气泡外 | 关闭 |
 | 点击复制 / `SUPER + CTRL + SHIFT + U` | 复制译文，图标变对勾反馈 |
+| 点击气泡内部（非按钮处） | **不关闭** —— 卡片吞掉点击（第 15 节；输入态下这条是必需的） |
 
 复制的是**译文**（用户已确认的范围）。
 
@@ -337,9 +340,11 @@ Rules:
 ```lua
 o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
 o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
+o.bind("SUPER + CTRL + I", "Translate typing", "omarchy-shell billy.translate input")
 ```
 
-第一条走 shell 门面（与 clipboard / emojis 的写法一致）；第二条直接打插件自己的 `IpcHandler`。因此根元素必须暴露 `open(payloadJson)`、`close()` 和 `opened` 属性 —— 这是 shell 门面的契约（`shell.summon()` 调 `loader.item.open()`，`isPluginOpen()` 优先读 `loader.item.opened === true`）。
+第一条走 shell 门面（与 clipboard / emojis 的写法一致）；第二条直接打插件自己的 `IpcHandler`。
+第三条（输入态，第 15 节）也走插件自己的 `IpcHandler`：shell 门面只有一个 `opened` 与一个 `toggle`，表达不了"用哪个模式打开"。该键位绑定前已对着 `omarchy menu keybindings --print` 确认空闲，因此不需要 `hl.unbind`。因此根元素必须暴露 `open(payloadJson)`、`close()` 和 `opened` 属性 —— 这是 shell 门面的契约（`shell.summon()` 调 `loader.item.open()`，`isPluginOpen()` 优先读 `loader.item.opened === true`）。
 
 ## 14. 已知限制
 
@@ -347,3 +352,97 @@ o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.tran
 2. 弹窗打开时无法用鼠标划选新文本
 3. 部分应用不写主选择区，只能走兜底路径
 4. 首次使用需要先有 `billy.chat` 的配置，或手编 `config.json`
+5. 输入态的草稿只活在内存里（靠 `keepLoaded` 常驻）：关闭气泡后仍在，**shell 重启会清空**（第 15 节）
+
+## 15. 输入翻译
+
+**目的**：手输或粘贴一段文字直接翻译，不必先在别的应用里选中它。
+**非目标**：不建输入历史；不做手动目标语言（沿用第 9 节的自动判定）；不做边打边译；不新增配置项（`config.json` 仍是第 10 节的七个键）；草稿不落盘。
+
+### 模式模型
+
+`Overlay.qml` 新增 `mode`（`selection` | `input`），与第 8 节的 `phase` **正交**，相位集合一个值都不加：
+
+| 场景 | mode | phase | 气泡 |
+|---|---|---|---|
+| 取词（不变） | `selection` | picking → translating → done/error | 现状 |
+| 开输入态、未提交 | `input` | `empty`（`failureText` 清空） | 只有输入框 |
+| 提交之后 | `input` | translating → done/error | 输入框 + 译文（与取词同一套渲染与取消/超时逻辑） |
+
+`picking` 在输入态不会出现 —— 不调用 `bin/pick-text`，因此第 4 节"取词必须先于显示"的硬约束在这里不存在，surface 可以立刻出现。
+
+### 入口与按键
+
+新增零参 `IpcHandler` 方法 `input(): void`（参数必须标注类型，未标注即 `QVariant`，加载期被拒）。语义：已是输入态 → 关闭；否则以输入态打开；从取词态按它则**切换模式而不关闭**。
+
+| 按键 | 行为 |
+|---|---|
+| `Enter` | 提交当前输入；若正在流式中则先取消再提交（时序见下） |
+| `Shift + Enter` | 换行，不提交 |
+| `Esc` | 取消进行中的请求并关闭（内容保留） |
+| 空输入按 `Enter` | 无操作：不发请求、不报错 —— 取词路径那句 `No text selected.` 用在这里不诚实 |
+
+输入框常驻气泡顶部，输入的文字**就是**原文（取词模式下的只读原文区由它顶替）。方向标签随输入实时更新。
+
+方向标签随输入实时更新，但此时显示的译文仍来自**上一次提交**。因此当"当前输入"与"产出该译文的文本"不一致时，译文区以 `opacity: 0.6` 变暗，使旧结果不会被误读为当前输入的结果；提交后恢复（验收标准第 6 条）。
+
+### 焦点归属
+
+surface 持 `WlrKeyboardFocus.Exclusive`，键盘必须在插件内部安排：输入态下输入框 `focus: true` 并自行处理 `Enter` / `Esc`；取词态下第 9 节那个 key catcher（`focus: true` + `Keys.onEscapePressed`）继续持焦点。两者按 `mode` 互斥。
+
+### 高度预算
+
+卡片上限 `Style.space(420)` 且 `BorderSurface` 不裁剪，因此三块内容必须**按一份预算分配**，不能各自设限，否则内容会画到卡片外：
+
+```
+bodyBudget = maxHeight - 2*cardPadding
+表头        固定                        ≈ Style.space(20)
+输入框      min(内容高, Style.space(72))  超出则内部滚动（约 3 行）
+译文区      bodyBudget 减去上面两块与间距   且 ≤ maxResultHeight（Style.space(260)）
+```
+
+### 点击归属（行为变更，两种模式都生效）
+
+气泡卡片此前**没有** MouseArea，于是点卡片任何非按钮处都会穿透到遮罩把气泡关掉。输入态下这是致命的：点一下想把光标放进输入框，气泡就没了。因此卡片背景新增一个吞点击的 `MouseArea`；两个按钮声明在它之后，照常收到点击。**这条改变了取词模式的行为**：点卡片内部不再关闭，只剩点卡片外的暗区关闭（第 9 节表格已同步）。
+
+### 草稿的生命周期
+
+`manifest.json` 的 `keepLoaded: true` 让 overlay 的 QML 实例在插件启用期间常驻（shell 对第一方 clipboard / menu / emojis 用的是同一机制），因此输入内容与上一次译文跨越"关闭 → 重开"存活，无需任何持久化写入。**边界**：shell 重启会清空（实例重建）—— 落盘不在本版范围。重开时输入框内容**全选**，直接打字即替换。
+
+### 提交与取消的时序
+
+`Transport.start()` 在流式中直接返回（它吸收的是探测器重复信号），而 `cancel()` 是异步的（SIGTERM 往返，子进程退出前 `state` 仍是 `streaming`）。因此：
+
+- 提交时不在流式中 → 清 `failureText` → `transport.start()`
+- 提交时在流式中 → 置 `pendingSubmit` → `transport.cancel()` → **在 `finished` 回调里**用当前输入内容重新提交
+- `pendingSubmit` 为真时，`finished("canceled")` 的结果被**吞掉**（不写 `failureText`、不改 `phase`），否则屏幕上会闪一下假的 `No translation returned.`
+
+超时沿用 Transport 的 `timeoutSec`；`Esc` 关闭沿用 `close()` → `transport.cancel()`。
+
+### 方向标签
+
+判定规则从 `Overlay.qml` 的 `labelFor()` 提为 `Translate.js` 的纯函数 `directionLabel(text)`，因此进入
+`tests/translate.test.js` 的覆盖：它现在每次输入都要算。
+
+**两者不是同一条规则，也无法是**：标签是客户端启发式（**含任意 CJK 字符**即判为中文），而内置 prompt 是让
+模型自己判断 "predominantly Chinese"。边界上会不一致 —— 例如以英文为主、只夹一个中文词的输入，标签显示
+`中文 → EN`，模型仍可能译成中文。这是既有行为，本节不改变它，只是让标签变成有测试覆盖的纯函数。
+
+### 验收标准
+
+| # | 操作 | 期望 |
+|---|---|---|
+| 1 | `SUPER + CTRL + I` | 气泡出现，只有输入框；空输入时无标签 |
+| 2 | 输入英文 / 中文 | 标签随打字实时变 `→ 中文` / `中文 → EN` |
+| 3 | `Enter` | 译文流式出现 |
+| 4 | `Shift + Enter` | 换行，不翻译 |
+| 5 | 译文出现后改字再回车 | 旧请求被取消、新译文出现；全程无假错误 |
+| 6 | 改了字但未回车 | 旧译文变暗；回车后恢复 |
+| 7 | 点气泡内部 / 点暗区 | 不关闭 / 关闭 |
+| 8 | `Esc` 后重按 `SUPER + CTRL + I` | 内容还在，且全选 |
+| 9 | 空输入回车 | 无反应、无请求（`pgrep -a curl` 佐证） |
+| 10 | 输入态点复制按钮 | 复制译文 |
+| 11 | **回归**：`SUPER + CTRL + U` 取词翻译 | 照旧（Esc、复制、长文封顶、401 文案） |
+| 12 | 输入十行长文 | 输入框约 3 行后内部滚动；卡片不越出屏幕 |
+
+第 12 节的验证手段（门禁 + 纯函数测试 + 人工走查）同样适用于本节；现有自动化套件必须保持全绿。
