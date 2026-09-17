@@ -140,18 +140,14 @@ character still counts as Chinese."
   // is the typed-text flow. The phase set is unchanged — input mode uses
   // empty / translating / done / error, and never picking (no probe runs).
   property string mode: "selection"
-  property string inputText: ""
+  // Bound, never assigned here: the TextArea inside Bubble.qml is the only
+  // writer, so the two cannot drift. Ids are file-scoped — Bubble's own
+  // `inputText` is a different property from this one.
+  property string inputText: bubble.inputText
   // Set when a submit lands while a stream is in flight: cancel() is async, so
   // the new request has to wait for finished() rather than pressing start()
   // into the streaming guard.
   property bool pendingSubmit: false
-```
-
-`Bubble.qml` 需要的高度上限也在这里定义（Task 3 的预算会用到它）：
-
-```qml
-  readonly property int maxInputHeight: Style.space(72)
-  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight, root.maxInputHeight) : 0
 ```
 
 `open(payloadJson)` 改为先看 payload 里的模式（其余行为不变）：
@@ -254,6 +250,10 @@ character still counts as Chinese."
 ```qml
   property string mode: "selection"
   property string inputText: ""
+  // The input area's own cap, and what Task 3's budget reads. `inputArea` is
+  // the TextArea further down this same file.
+  readonly property int maxInputHeight: Style.space(72)
+  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight, root.maxInputHeight) : 0
   signal submitRequested()
 ```
 
