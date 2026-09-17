@@ -169,6 +169,7 @@ character still counts as Chinese."
       // Nothing to pick: the surface can appear at once.
       root.phase = "empty"
       transport.cancel()
+      root.refreshInputLabel()
       Qt.callLater(function () { bubble.selectAllInput() })
       return
     }
@@ -222,6 +223,14 @@ character still counts as Chinese."
     transport.start()
   }
 ```
+
+  // The label follows the input, but goes blank rather than claiming a
+  // direction for an empty field (walkthrough row 1), and is refreshed when a
+  // restored draft reopens (row 8) rather than waiting for the next keystroke.
+  function refreshInputLabel() {
+    root.directionLabel = root.inputText.trim() === ""
+      ? "" : Translate.directionLabel(root.inputText)
+  }
 
 `transport.text` 的绑定改为随模式取源：
 
@@ -373,7 +382,7 @@ character still counts as Chinese."
 
 ```qml
     mode: root.mode
-    onInputChanged: root.directionLabel = Translate.directionLabel(root.inputText)
+    onInputChanged: root.refreshInputLabel()
     onSubmitRequested: root.submitInput()
 ```
 
@@ -502,7 +511,7 @@ returns early while a child is still exiting and cancel() cannot be awaited."
 `Overlay.qml` 的 `Bubble` 实例化块加：
 
 ```qml
-    stale: root.mode === "input" && root.inputText !== root.submittedText && root.submittedText !== ""
+    stale: root.mode === "input" && root.inputText !== root.submittedText
 ```
 
 - [ ] **Step 4: 门禁 + 提交**
