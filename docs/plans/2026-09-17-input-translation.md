@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 给插件增加"手输文字直接翻译"的输入态：`SUPER + CTRL + I` 呼出，输入框常驻、回车译、Shift+回车换行、可改字重译、Esc 关闭后内容保留。
+**Goal:** 给插件增加"手输文字直接翻译"的输入态：`ALT + I` 呼出，输入框常驻、回车译、Shift+回车换行、可改字重译、Esc 关闭后内容保留。
 
 **Architecture:** 在现有唯一的 overlay 上增加与 `phase` **正交**的 `mode`（`selection` | `input`），复用同一套 Transport、取消、超时、Esc、复制与气泡渲染；输入框用 `TextArea` 顶替只读原文区；草稿靠 manifest 已有的 `keepLoaded: true` 常驻内存，不落盘。
 
@@ -578,7 +578,7 @@ omarchy menu keybindings --print | grep -E "^SUPER CTRL \+ I( |$)"   # 期望无
 在 `~/.config/hypr/bindings.lua` **末尾**追加一行（其余一行不动）：
 
 ```lua
-o.bind("SUPER + CTRL + I", "Translate typing", "omarchy-shell billy.translate input")
+o.bind("ALT + I", "Translate typing", "omarchy-shell billy.translate input")
 ```
 
 再确认它进去了：
@@ -593,7 +593,7 @@ omarchy menu keybindings --print | grep -i "translate"
 `## Keys` 表加一行：
 
 ```markdown
-| `SUPER + CTRL + I` | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
+| `ALT + I` | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
 ```
 
 在 `## Keys` 之后新增一节：
@@ -601,7 +601,7 @@ omarchy menu keybindings --print | grep -i "translate"
 ```markdown
 ## Typing text
 
-`SUPER + CTRL + I` opens the bubble with an input field instead of the
+`ALT + I` opens the bubble with an input field instead of the
 selection. Enter translates, Shift+Enter adds a line, and editing the text and
 pressing Enter again re-translates — the request in flight is cancelled first.
 A result whose text you have since changed is dimmed, so an old translation
@@ -660,17 +660,17 @@ Expected: 无 `failed` / `Expected token` / `is not a type`。**行号与磁盘�
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | `SUPER + CTRL + I` | 气泡出现，只有输入框；空输入时无标签 |
+| 1 | `ALT + I` | 气泡出现，只有输入框；空输入时无标签 |
 | 2 | 输入英文 / 中文 | 标签随打字实时变 `→ 中文` / `中文 → EN` |
 | 3 | `Enter` | 译文流式出现 |
 | 4 | `Shift + Enter` | 换行，不翻译 |
 | 5 | 译文出现后改字再回车 | 旧请求被取消、新译文出现；全程**无**假错误 |
 | 6 | 改了字但未回车 | 旧译文变暗；回车后恢复 |
 | 7 | 点气泡内部 / 点暗区 | 不关闭 / 关闭 |
-| 8 | `Esc` 后重按 `SUPER + CTRL + I` | 内容还在，且全选 |
+| 8 | `Esc` 后重按 `ALT + I` | 内容还在，且全选 |
 | 9 | 空输入回车 | 无反应、无请求（可 `pgrep -a curl` 佐证） |
 | 10 | 输入态点复制按钮 | 复制的是译文 |
-| 11 | **回归**：`SUPER + CTRL + U` 取词翻译 | 照旧（Esc、复制、长文封顶、401 文案） |
+| 11 | **回归**：`ALT + D` 取词翻译 | 照旧（Esc、复制、长文封顶、401 文案） |
 | 12 | 输入十行长文 | 输入框约 3 行后内部滚动；卡片不越出屏幕 |
 
 （顺带：第 5 或第 12 条若恰好遇上"已有部分译文后中途失败"，确认那条 `Color.urgent` 说明仍在卡片内 —— 高度预算最容易被踩回来的就是这一处，3 行说明在修复前会越界 33px。）

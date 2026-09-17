@@ -40,7 +40,7 @@
 ## 4. 架构
 
 ```
-Hyprland 键位 (SUPER + CTRL + U)
+Hyprland 键位 (ALT + D)
   └─ omarchy-shell shell toggle billy.translate '{}'
        └─ shell.summon() → Overlay.qml.open(payloadJson)
             ├─ ① Probe.cursorPos()   → bin/cursor-pos    （~15ms）
@@ -244,7 +244,7 @@ idle ──open()──> picking ──取到文本──> translating ──流
 | `Esc` | 取消进行中的请求并关闭 |
 | 再按一次快捷键 | 同上（`toggle`） |
 | 点击气泡外 | 关闭 |
-| 点击复制 / `SUPER + CTRL + SHIFT + U` | 复制译文，图标变对勾反馈 |
+| 点击复制按钮，或 IPC `omarchy-shell billy.translate copy` | 复制译文，图标变对勾反馈 |
 | 点击气泡内部（非按钮处） | **不关闭** —— 卡片吞掉点击（第 15 节；输入态下这条是必需的） |
 
 复制的是**译文**（用户已确认的范围）。
@@ -338,9 +338,10 @@ Rules:
 `~/.config/hypr/bindings.lua`：
 
 ```lua
-o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
-o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
-o.bind("SUPER + CTRL + I", "Translate typing", "omarchy-shell billy.translate input")
+o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+-- Copy has no chord on this machine: use the bubble's copy button,
+-- or `omarchy-shell billy.translate copy`.
+o.bind("ALT + I", "Translate typing", "omarchy-shell billy.translate input")
 ```
 
 第一条走 shell 门面（与 clipboard / emojis 的写法一致）；第二条直接打插件自己的 `IpcHandler`。
@@ -432,17 +433,17 @@ bodyBudget = maxHeight - 2*cardPadding
 
 | # | 操作 | 期望 |
 |---|---|---|
-| 1 | `SUPER + CTRL + I` | 气泡出现，只有输入框；空输入时无标签 |
+| 1 | `ALT + I` | 气泡出现，只有输入框；空输入时无标签 |
 | 2 | 输入英文 / 中文 | 标签随打字实时变 `→ 中文` / `中文 → EN` |
 | 3 | `Enter` | 译文流式出现 |
 | 4 | `Shift + Enter` | 换行，不翻译 |
 | 5 | 译文出现后改字再回车 | 旧请求被取消、新译文出现；全程无假错误 |
 | 6 | 改了字但未回车 | 旧译文变暗；回车后恢复 |
 | 7 | 点气泡内部 / 点暗区 | 不关闭 / 关闭 |
-| 8 | `Esc` 后重按 `SUPER + CTRL + I` | 内容还在，且全选 |
+| 8 | `Esc` 后重按 `ALT + I` | 内容还在，且全选 |
 | 9 | 空输入回车 | 无反应、无请求（`pgrep -a curl` 佐证） |
 | 10 | 输入态点复制按钮 | 复制译文 |
-| 11 | **回归**：`SUPER + CTRL + U` 取词翻译 | 照旧（Esc、复制、长文封顶、401 文案） |
+| 11 | **回归**：`ALT + D` 取词翻译 | 照旧（Esc、复制、长文封顶、401 文案） |
 | 12 | 输入十行长文 | 输入框约 3 行后内部滚动；卡片不越出屏幕 |
 
 第 12 节的验证手段（门禁 + 纯函数测试 + 人工走查）同样适用于本节；现有自动化套件必须保持全绿。

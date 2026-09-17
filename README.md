@@ -1,6 +1,6 @@
 # Translate (billy.translate)
 
-Select text anywhere, press `SUPER + CTRL + U`, read the translation in a
+Select text anywhere, press `ALT + D`, read the translation in a
 bubble at the cursor. Translations stream in, and the bubble copies with one
 click.
 
@@ -19,15 +19,16 @@ Third-party plugins are not enabled by default. The id has to be in
 
 | Key | Action |
 |---|---|
-| `SUPER + CTRL + U` | Translate the selection; press again to dismiss |
-| `SUPER + CTRL + SHIFT + U` | Copy the current translation |
+| `ALT + D` | Translate the selection; press again to dismiss |
+| *(unbound)* | Copy the translation — use the bubble's copy button, or the IPC verb below |
 | `Esc`, or click outside | Dismiss |
 
 Bind them in `~/.config/hypr/bindings.lua`:
 
 ```lua
-o.bind("SUPER + CTRL + U", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
-o.bind("SUPER + CTRL + SHIFT + U", "Copy translation", "omarchy-shell billy.translate copy")
+o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+-- Copy has no chord on this machine: use the bubble's copy button,
+-- or `omarchy-shell billy.translate copy`.
 ```
 
 ## Configuration
