@@ -35,6 +35,7 @@ PanelWindow {
   // returned." under whatever the bubble is doing now — or a stray
   // phase="error", which would make the surface appear during the pick window.
   property bool discardNextFinish: false
+  property string submittedText: ""
 
   property var cursorPos: null
   property string selectedText: ""
@@ -166,6 +167,7 @@ PanelWindow {
       transport.cancel()
       return
     }
+    root.submittedText = root.inputText
     root.failureText = ""
     root.phase = "translating"
     transport.start()
@@ -236,6 +238,7 @@ PanelWindow {
       }
       if (root.pendingSubmit) {
         root.pendingSubmit = false
+        root.submittedText = root.inputText
         root.failureText = ""
         root.phase = "translating"
         transport.start()
@@ -278,6 +281,7 @@ PanelWindow {
     errorText: root.failureText
     directionLabel: root.directionLabel
     copied: root.copied
+    stale: root.mode === "input" && root.inputText !== root.submittedText
     onCopyRequested: root.copyTranslation()
     onCloseRequested: root.close()
     onInputChanged: root.refreshInputLabel()

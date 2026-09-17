@@ -18,6 +18,7 @@ Item {
   property string errorText: ""
   property string directionLabel: ""
   property bool copied: false
+  property bool stale: false
 
   property string mode: "selection"
   property string inputText: ""
@@ -41,6 +42,14 @@ Item {
   // long, and the text scrolls under a fixed ceiling instead.
   readonly property int maxResultHeight: Style.space(260)
   readonly property int cardPadding: Style.space(14)
+  readonly property int headerHeight: Style.space(20)
+  // The card is clamped at maxHeight and BorderSurface does not clip, so the
+  // input and the result share one budget instead of each capping itself —
+  // their sum can otherwise exceed the card and draw over the scrim.
+  readonly property int bodyBudget: root.maxHeight - 2 * root.cardPadding
+  readonly property int resultCap: root.mode === "input"
+    ? Math.max(0, root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing)
+    : root.maxResultHeight
 
   function selectAllInput() {
     if (root.mode !== "input") return
@@ -55,6 +64,12 @@ Item {
   // [padding, padding + implicitHeight] while the card would otherwise end at
   // implicitHeight — the last line would draw outside the card.
   height: Math.max(root.minHeight, Math.min(root.maxHeight, body.implicitHeight + 2 * root.cardPadding))
+
+  // Clicks inside the card must not reach the scrim's MouseArea behind it: in
+  // input mode that would dismiss the bubble the moment you click to place the
+  // caret, and in selection mode "click the text and it vanishes" is a
+  // surprise either way.
+  MouseArea { anchors.fill: parent }
 
   BorderSurface {
     anchors.fill: parent
@@ -213,7 +228,8 @@ Item {
         id: resultView
         width: parent.width
         visible: root.phase !== "empty"
-        height: Math.min(resultText.implicitHeight, root.maxResultHeight)
+        height: Math.min(resultText.implicitHeight, root.resultCap)
+        opacity: root.stale ? 0.6 : 1
         contentWidth: width
         contentHeight: resultText.implicitHeight
         clip: true
