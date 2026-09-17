@@ -596,6 +596,15 @@ omarchy menu keybindings --print | grep -i "translate"
 | `ALT + I` | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
 ```
 
+并且把 `## Keys` 下方那段 `lua` 块补全 —— 它现在只列了 `ALT + D` 与复制注释，读者照抄就绑不上输入键。同时把引导句里的 "Bind them" 改成 "Bind the chords"（下面有一行是 `*(unbound)*`，原文读起来不实）：
+
+```lua
+o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("ALT + I", "Translate typing", "omarchy-shell billy.translate input")
+-- Copy has no chord on this machine: use the bubble's copy button,
+-- or `omarchy-shell billy.translate copy`.
+```
+
 在 `## Keys` 之后新增一节：
 
 ```markdown
