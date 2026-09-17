@@ -233,6 +233,7 @@ PanelWindow {
     // to "done" and lose the distinction.
     onFinished: function (outcome) {
       if (root.discardNextFinish) {
+        root.pendingSubmit = false
         root.discardNextFinish = false
         return
       }

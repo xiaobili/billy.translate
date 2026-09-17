@@ -314,7 +314,7 @@ Rules:
 
 ## 12. 验证
 
-诚实说明：**这个项目没有自动化测试设施。**
+诚实说明：**QML 层没有自动化测试设施，能自动化的那部分已经收进一个入口。** `tools/test.sh` 一次跑完三样：`tools/check-syntax.sh`（`qmllint` 只看 `[syntax]` 类，外加 `omarchy plugin validate`）、`tests/layout.test.js` 与 `tests/translate.test.js`（`Layout.js` / `Translate.js` 的纯函数，`node` 直跑，`tests/run.js` 是它们的小 harness）、`tests/scripts.test.sh`（`bin/` 两个脚本 —— **不是惰性的**：会真动剪贴板，并向焦点窗口合成 Ctrl+C）。剩下的按下面两类走。
 
 **可以自动/命令行验证的：**
 
@@ -393,14 +393,22 @@ surface 持 `WlrKeyboardFocus.Exclusive`，键盘必须在插件内部安排：�
 
 ### 高度预算
 
-卡片上限 `Style.space(420)` 且 `BorderSurface` 不裁剪，因此三块内容必须**按一份预算分配**，不能各自设限，否则内容会画到卡片外：
+卡片上限 `Style.space(420)`，且卡片的 `BorderSurface` 现在带 `clip: true`。裁剪只是兜底 —— 它把溢出变成切边，并不会把内容显示出来 —— 所以几块内容仍必须**按一份预算分配**，不能各自设限：
 
 ```
 bodyBudget = maxHeight - 2*cardPadding
-表头        固定                        ≈ Style.space(20)
-输入框      min(内容高, Style.space(72))  超出则内部滚动（约 3 行）
-译文区      bodyBudget 减去上面两块与间距   且 ≤ maxResultHeight（Style.space(260)）
+表头        固定                                       ≈ Style.space(20)
+输入框      min(内容高, Style.space(72))               超出则内部滚动（约 3 行）；取词态恒为 0
+报错说明    可见时 implicitHeight + body.spacing，否则 0  列的第四个子项
+译文区      min(maxResultHeight, 预算项)               预算项 = bodyBudget − 表头 − 输入框 − 2*body.spacing − 报错说明
 ```
+
+两点容易漏：
+
+- **报错说明要连间距一起收。** 它是列的第四个可见子项，显示时会再开一个 `body.spacing`；只收高度不收间距会留下 8 px 溢出（本计划第一稿两个都不收，留下 22–50 px 的红字画到遮罩上）。
+- **译文区在两种模式下都由 `maxResultHeight` 封顶**，即 `min(maxResultHeight, 预算项)`。取词态不按预算项收费，`resultCap` 直接就是 `maxResultHeight`；输入态才真的减，且这一夹是关键 —— 预算项本身会把整列正好顶到 `bodyBudget`，余量为零，不减到上限就会溢出（本计划第一稿正是漏了这一夹：`resultCap` 算出 284，而上限是 260）。
+
+**取词模式不在本公式的预算之内。** 它目前装得下：shell 默认 `[spacing] scale` 下只剩几像素。但空间派生的项随 `scale` 缩放、文字派生的项不随之缩放，所以 `scale` 降到大约 0.94 以下时，列的最后一个子项（红色 `Color.urgent` 报错说明）会画到卡片外的遮罩上。现在由 `clip: true` 兜底：表现为卡片下缘的切边，不再外溢。阈值是近似值，随字体与主题 token 浮动。
 
 ### 点击归属（行为变更，两种模式都生效）
 
@@ -408,7 +416,7 @@ bodyBudget = maxHeight - 2*cardPadding
 
 ### 草稿的生命周期
 
-`manifest.json` 的 `keepLoaded: true` 让 overlay 的 QML 实例在插件启用期间常驻（shell 对第一方 clipboard / menu / emojis 用的是同一机制），因此输入内容与上一次译文跨越"关闭 → 重开"存活，无需任何持久化写入。**边界**：shell 重启会清空（实例重建）—— 落盘不在本版范围。重开时输入框内容**全选**，直接打字即替换。
+`manifest.json` 的 `keepLoaded: true` 让 overlay 的 QML 实例在插件启用期间常驻（shell 对第一方 clipboard / menu / emojis 用的是同一机制），因此输入内容跨越"关闭 → 重开"存活在内存里，无需任何持久化写入：重开时输入框内容**全选**，直接打字即替换。**上一次的译文不会跟着回来** —— `open()` 把 `phase` 置为 `empty`，译文区在 `phase === "empty"` 时整块隐藏，所以重开只看得到输入框。**边界**：shell 重启会清空（实例重建）—— 落盘不在本版范围。
 
 ### 提交与取消的时序
 

@@ -81,6 +81,15 @@ Item {
 
   BorderSurface {
     anchors.fill: parent
+    // The card is clamped at maxHeight while the column below is what decides
+    // how tall it wants to be, so any child that forgets the budget would paint
+    // over the scrim underneath. Selection mode's column is not budgeted at all
+    // (see the design spec §15), which makes that a reachable mistake once
+    // [spacing] scale drops far enough. Clipping turns that whole class of bug
+    // into a cut edge instead of a spill. Nothing here deliberately overflows —
+    // no shadow, no gradient border — and the buttons' hover tooltip lands well
+    // inside a card at minHeight, so clipping does not eat anything intended.
+    clip: true
     radius: Style.cornerRadius
     color: Color.popups.background
     borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))

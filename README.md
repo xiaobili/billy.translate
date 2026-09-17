@@ -41,6 +41,11 @@ pressing Enter again re-translates — the request in flight is cancelled first.
 A result whose text you have since changed is dimmed, so an old translation
 never reads as the current one.
 
+No cursor query runs in input mode, so the bubble opens where the cursor was
+last queried — wherever the pointer was for the last `ALT + D`, or centred on
+the screen the first time. Querying it here would only make the card jump out
+from under you once it was already visible.
+
 The draft lives in memory: it survives closing the bubble and comes back
 selected next time, but a shell restart clears it.
 
@@ -95,6 +100,9 @@ clipboard writes, and a clipboard watcher can observe the one in between.
    the fallback path.
 4. There is no settings UI. Edit the JSON.
 5. The draft in the input field is in memory only — a shell restart clears it.
+6. Input mode's card is height-budgeted; selection mode's is not. It fits at the
+   default `[spacing] scale` with a few pixels to spare, but below roughly 0.94
+   the card clips its last line instead of painting it over the scrim.
 
 ## Tests
 
