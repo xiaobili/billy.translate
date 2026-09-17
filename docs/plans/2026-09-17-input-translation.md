@@ -252,8 +252,11 @@ character still counts as Chinese."
   property string inputText: ""
   // The input area's own cap, and what Task 3's budget reads. `inputArea` is
   // the TextArea further down this same file.
+  readonly property int inputInset: Style.space(6)
   readonly property int maxInputHeight: Style.space(72)
-  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight, root.maxInputHeight) : 0
+  // The box is the text plus its inset, capped; past the cap the Flickable
+  // scrolls instead of the box growing.
+  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight + 2 * root.inputInset, root.maxInputHeight) : 0
   signal submitRequested()
 ```
 
@@ -281,33 +284,65 @@ character still counts as Chinese."
         color: Color.popups.background
         borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
-        TextArea {
-          id: inputArea
+        // A TextArea carries no scroll state of its own — no contentY, no
+        // internal Flickable — so capping its height would simply cut the caret
+        // off: typing past the cap goes blind. The Flickable is the scroll
+        // carrier, and the caret-follow below is what keeps the line you are
+        // typing visible. It hangs off the caret's own movement, because
+        // contentY only changes when something scrolls it. (billy.chat's
+        // Composer hooks onContentYChanged for this; that fires on scrolling,
+        // not on typing, so it does not actually follow the caret.)
+        Flickable {
+          id: inputView
           anchors.fill: parent
-          anchors.margins: Style.space(6)
-          placeholderText: "Type or paste text — Enter to translate"
-          color: Color.foreground
-          wrapMode: TextArea.Wrap
-          textFormat: TextEdit.PlainText
-          focus: root.mode === "input"
-          background: null
-          font.family: Style.font.resolvedFamily
-          font.pixelSize: Style.font.body
-          onTextChanged: {
-            root.inputText = text
-            root.inputChanged()
-          }
-          Keys.onPressed: function (event) {
-            if (event.key === Qt.Key_Escape) {
-              event.accepted = true
-              root.closeRequested()
-              return
+          anchors.margins: root.inputInset
+          contentWidth: width
+          contentHeight: inputArea.contentHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+
+          TextArea {
+            id: inputArea
+            width: inputView.width
+            placeholderText: "Type or paste text — Enter to translate"
+            color: Color.foreground
+            wrapMode: TextArea.Wrap
+            textFormat: TextEdit.PlainText
+            focus: root.mode === "input"
+            background: null
+            // The Flickable's margins are the inset; the control's own padding
+            // would add a style-dependent number on top of it.
+            padding: 0
+            leftPadding: 0
+            rightPadding: 0
+            topPadding: 0
+            bottomPadding: 0
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.body
+            onTextChanged: {
+              root.inputText = text
+              root.inputChanged()
             }
-            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              // Shift+Enter falls through to TextArea's own newline.
-              if (event.modifiers & Qt.ShiftModifier) return
-              event.accepted = true
-              root.submitRequested()
+            onCursorRectangleChanged: {
+              if (!activeFocus) return
+              var caret = cursorRectangle
+              if (caret.y < inputView.contentY) inputView.contentY = caret.y
+              else if (caret.y + caret.height > inputView.contentY + inputView.height)
+                inputView.contentY = caret.y + caret.height - inputView.height
+            }
+            Keys.onPressed: function (event) {
+              if (event.key === Qt.Key_Escape) {
+                event.accepted = true
+                root.closeRequested()
+                return
+              }
+              if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                // Shift+Enter falls through to TextArea's own newline.
+                if (event.modifiers & Qt.ShiftModifier) return
+                event.accepted = true
+                root.submitRequested()
+              }
             }
           }
         }
@@ -344,7 +379,45 @@ character still counts as Chinese."
 
 （`inputText` 不从这里回写：输入框是唯一写入方，避免双向绑定打架。）
 
-- [ ] **Step 5: 门禁 + 提交**
+- [ ] **Step 5: 守住在飞的回调（模式切换绕过了 `opened` 守卫）**
+
+在这次改动之前，离开 `picking`／`translating` 的唯一途径是 `close()`（`opened` 变 false），所以 `if (!root.opened) return` 足够。现在 `open()` 的输入分支**保持 `opened` 为 true** 就切换了模式，于是取词流程在飞的三个回调会驱动输入态气泡：拾取到的文字会覆盖标签并**不经回车就发起请求**；探测失败会在输入框下方画 `No text selected.`；而翻译流式中途按输入热键时，被取消的那次会画一个假的 `No translation returned.`，甚至把 `phase` 置成 `error` —— 那会让 surface 在取词窗口期内显现，正是"取词必须先于显示"这条硬约束要防的。
+
+`Overlay.qml` 属性区加：
+
+```qml
+  // Set when a mode switch cancels a stream: that cancel's finished() is not a
+  // result, and painting a verdict from it would put a false "No translation
+  // returned." under whatever the bubble is doing now — or a stray
+  // phase="error", which would make the surface appear during the pick window.
+  property bool discardNextFinish: false
+```
+
+`open()` 的两个分支里，在 `transport.cancel()` **之前**各加两行：
+
+```qml
+      root.pendingSubmit = false
+      root.discardNextFinish = transport.streaming
+```
+
+`Probe` 的三个回调，首行守卫都改为：
+
+```qml
+      if (!root.opened || root.mode !== "selection") return
+```
+
+（`onTextReady`、`onTextFailed`、`onCursorFailed`；`onCursorReady` 只写 `cursorPos`，无害，不动。）
+
+`onFinished` 的最前面加一段（**在 `pendingSubmit` 分支之前**）：
+
+```qml
+      if (root.discardNextFinish) {
+        root.discardNextFinish = false
+        return
+      }
+```
+
+- [ ] **Step 6: 门禁 + 提交**
 
 ```bash
 ./tools/check-syntax.sh          # 期望：qml syntax ok，且无 [syntax] 行
