@@ -76,4 +76,14 @@ check("a plain body is used as the detail", T.errorText(400, "bad request"), "HT
 check("a long detail is truncated to 300 chars",
   T.errorText(400, "x".repeat(500)).length, "HTTP 400: ".length + 300 + 1)
 
+// ---------------------------------------------------------------- direction
+
+// A client-side heuristic, deliberately not the rule the prompt hands the
+// model: "predominantly Chinese" is the model's judgement, while this counts
+// any CJK character as Chinese. The two can disagree at the margin.
+check("empty text labels as non-Chinese", T.directionLabel(""), "→ 中文")
+check("Chinese text labels the other way", T.directionLabel("你好，世界"), "中文 → EN")
+check("English text labels to Chinese", T.directionLabel("hello world"), "→ 中文")
+check("a single CJK character is enough", T.directionLabel("hello 你好"), "中文 → EN")
+
 report()

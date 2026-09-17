@@ -5,6 +5,7 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Layout.js" as Layout
+import "Translate.js" as Translate
 
 // The plugin root. The shell's facade calls open(payloadJson)/close() and
 // reads `opened` to decide what the toggle verb means, so all three are part
@@ -121,13 +122,6 @@ PanelWindow {
     copiedTimer.restart()
   }
 
-  // "EN → 中文" — enough to tell at a glance which way it went, without a
-  // language-detection pass of our own.
-  function labelFor(text) {
-    var chinese = /[一-鿿]/.test(text)
-    return chinese ? "中文 → EN" : "→ 中文"
-  }
-
   property Timer copiedTimer: Timer {
     interval: 1500
     onTriggered: root.copied = false
@@ -149,7 +143,7 @@ PanelWindow {
       // textReady starts a full translation behind a closed overlay.
       if (!root.opened) return
       root.selectedText = text
-      root.directionLabel = root.labelFor(text)
+      root.directionLabel = Translate.directionLabel(text)
       root.phase = "translating"
       transport.start()
     }

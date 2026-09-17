@@ -25,6 +25,14 @@ function defaultSystemPrompt() {
   return DEFAULT_SYSTEM_PROMPT
 }
 
+// Which way the label points, in one place: the bubble shows it and the input
+// field recomputes it on every keystroke. Any CJK character counts as Chinese
+// — a label is a glance, not a language-detection pass of our own.
+function directionLabel(text) {
+  var chinese = /[一-鿿]/.test(String(text === undefined || text === null ? "" : text))
+  return chinese ? "中文 → EN" : "→ 中文"
+}
+
 // The endpoint to POST to. Accepts a bare host, a /v1 root, or the full
 // completions path, so whatever a provider documents can be pasted in.
 function completionsUrl(baseUrl) {
