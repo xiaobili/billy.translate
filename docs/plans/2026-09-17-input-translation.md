@@ -463,8 +463,16 @@ returns early while a child is still exiting and cancel() cannot be awaited."
   // input and the result share one budget instead of each capping itself —
   // their sum can otherwise exceed the card and draw over the scrim.
   readonly property int bodyBudget: root.maxHeight - 2 * root.cardPadding
+  // The caption is the column's fourth visible child when it shows, and it opens
+  // a third gap. Charging its height without the gap leaves an 8 px spill;
+  // charging neither (this plan's first draft) left 22-50 px of red text over
+  // the scrim. `maxResultHeight` is a ceiling in BOTH modes: without the
+  // Math.min the no-caption column lands exactly on bodyBudget with zero
+  // headroom, which is how the overflow went unnoticed.
+  readonly property int captionHeight: errorCaption.visible ? errorCaption.implicitHeight + body.spacing : 0
   readonly property int resultCap: root.mode === "input"
-    ? Math.max(0, root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing)
+    ? Math.min(root.maxResultHeight, Math.max(0,
+        root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing - root.captionHeight))
     : root.maxResultHeight
 ```
 
@@ -473,6 +481,9 @@ returns early while a child is still exiting and cancel() cannot be awaited."
 ```qml
         height: Math.min(resultText.implicitHeight, root.resultCap)
 ```
+
+（同时给 `Bubble.qml` 里那块错误说明 `Text` 加 `id: errorCaption`：它是列的**第四个**可见子元素，预算要读它的 `implicitHeight`。）
+
 
 - [ ] **Step 2: 卡片吞掉点击**
 
