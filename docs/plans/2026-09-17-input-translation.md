@@ -452,6 +452,7 @@ changed dims to 0.6 rather than passing as current."
 **Files:**
 - Modify: `~/.config/hypr/bindings.lua`（仓库外，人类搭档的活配置）
 - Modify: `README.md`
+- Modify: `tests/translate.test.js`（收紧一条断言，见 Step 1）
 - Modify: `docs/plans/2026-09-17-select-to-translate.md`（加一行"本文已关闭"的说明）
 - Test: 人工走查 12 条 + `./tools/test.sh`
 
@@ -459,7 +460,21 @@ changed dims to 0.6 rather than passing as current."
 - Consumes: `IpcHandler.input()`（Task 2）、`Bubble.stale`（Task 3）
 - Produces: 可交付的功能
 
-- [ ] **Step 1: 装键位**
+- [ ] **Step 1: 收紧方向标签的一条断言**
+
+`tests/translate.test.js` 里那条 `check("a single CJK character is enough", T.directionLabel("hello 你好"), "中文 → EN")` 的**名字与输入不符**：`"hello 你好"` 含两个 CJK 字符，而全套里没有任何用例只含一个 —— 于是"要求至少两个 CJK 才判中文"的实现也能通过这条。改名，并补一条真正只含一个 CJK 字符的：
+
+```js
+check("CJK among Latin text is enough", T.directionLabel("hello 你好"), "中文 → EN")
+check("one CJK character alone is enough", T.directionLabel("好"), "中文 → EN")
+```
+
+（Task 1 留下的那条名字保持不变地删掉，位置不动。）
+
+Run: `node tests/translate.test.js`
+Expected: `41/41 passed`（40 条 + 新增 1 条）
+
+- [ ] **Step 2: 装键位**
 
 先确认仍空闲（**不要假设** —— 上一轮就是在这里撞上了 omarchy 自带的 Activity）：
 
@@ -480,7 +495,7 @@ omarchy menu keybindings --print | grep -i "translate"
 # 期望三行：Translate selection / Copy translation / Translate typing
 ```
 
-- [ ] **Step 2: README**
+- [ ] **Step 3: README**
 
 `## Keys` 表加一行：
 
@@ -509,7 +524,7 @@ selected next time, but a shell restart clears it.
 5. The draft in the input field is in memory only — a shell restart clears it.
 ```
 
-- [ ] **Step 3: 旧计划标记为已关闭**
+- [ ] **Step 4: 旧计划标记为已关闭**
 
 在 `docs/plans/2026-09-17-select-to-translate.md` 的标题行之后插入：
 
@@ -518,10 +533,10 @@ selected next time, but a shell restart clears it.
 > 本文内嵌的文件副本不再随之更新 —— 它们是那次实现的历史快照。
 ```
 
-- [ ] **Step 4: 提交**
+- [ ] **Step 5: 提交**
 
 ```bash
-git add README.md docs/plans/2026-09-17-select-to-translate.md
+git add README.md tests/translate.test.js docs/plans/2026-09-17-select-to-translate.md
 git commit -m "Document input translation and give T back its neighbours
 
 README gains the third chord, a Typing text section, and the draft's
@@ -531,7 +546,7 @@ so its embedded file copies are read as a historical snapshot."
 
 （`bindings.lua` 在仓库外，不随提交走。）
 
-- [ ] **Step 5: 跑全量测试（人类搭档执行）**
+- [ ] **Step 6: 跑全量测试（人类搭档执行）**
 
 Run（独立终端窗口，**不要**用 `$()` 捕获）：
 
@@ -541,7 +556,7 @@ cd ~/.config/omarchy/plugins/billy.translate && ./tools/test.sh; echo "EXIT=$?"
 
 Expected: 三段全绿、`25/25 passed`、`EXIT=0`。套件会替换剪贴板（文本会后还原），并向焦点窗口发一次真实 Ctrl+C —— 所以要在能承受这个的终端里跑。
 
-- [ ] **Step 6: 重启 shell 并走查（人类搭档执行）**
+- [ ] **Step 7: 重启 shell 并走查（人类搭档执行）**
 
 ```bash
 omarchy restart shell && sleep 3
@@ -567,7 +582,7 @@ Expected: 无 `failed` / `Expected token` / `is not a type`。**行号与磁盘�
 
 ## 完成标准
 
-- `./tools/test.sh` 全绿（`25/25`），`node tests/translate.test.js` 40/40
+- `./tools/test.sh` 全绿（`25/25`），`node tests/translate.test.js` 41/41
 - 上面 12 条走查全部通过，且第 11 条（取词回归）没有被本功能破坏
 - 没有一处硬编码颜色或裸像素数字
 - `docs/specs/2026-09-17-select-to-translate-design.md` §15 与本实现一致（实现中若发现 spec 有错，改 spec 而不是默默偏离）
