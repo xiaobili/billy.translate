@@ -673,6 +673,8 @@ Expected: 无 `failed` / `Expected token` / `is not a type`。**行号与磁盘�
 | 11 | **回归**：`SUPER + CTRL + U` 取词翻译 | 照旧（Esc、复制、长文封顶、401 文案） |
 | 12 | 输入十行长文 | 输入框约 3 行后内部滚动；卡片不越出屏幕 |
 
+（顺带：第 5 或第 12 条若恰好遇上"已有部分译文后中途失败"，确认那条 `Color.urgent` 说明仍在卡片内 —— 高度预算最容易被踩回来的就是这一处，3 行说明在修复前会越界 33px。）
+
 ## 完成标准
 
 - `./tools/test.sh` 全绿（`25/25`），`node tests/translate.test.js` 41/41
