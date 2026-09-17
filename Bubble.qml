@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import Quickshell
 import qs.Commons
 import qs.Ui
@@ -18,8 +19,17 @@ Item {
   property string directionLabel: ""
   property bool copied: false
 
+  property string mode: "selection"
+  property string inputText: ""
+  // The input area's own cap, and what Task 3's budget reads. `inputArea` is
+  // the TextArea further down this same file.
+  readonly property int maxInputHeight: Style.space(72)
+  readonly property int inputHeight: root.mode === "input" ? Math.min(inputArea.implicitHeight, root.maxInputHeight) : 0
+  signal submitRequested()
+
   signal copyRequested()
   signal closeRequested()
+  signal inputChanged()
 
   readonly property int cardWidth: Style.space(420)
   readonly property int minHeight: Style.space(120)
@@ -28,6 +38,12 @@ Item {
   // long, and the text scrolls under a fixed ceiling instead.
   readonly property int maxResultHeight: Style.space(260)
   readonly property int cardPadding: Style.space(14)
+
+  function selectAllInput() {
+    if (root.mode !== "input") return
+    inputArea.selectAll()
+    inputArea.forceActiveFocus()
+  }
 
   x: root.placement.x
   y: root.placement.y
@@ -90,12 +106,55 @@ Item {
         }
       }
 
+      // -------------------------------------------------------------- input
+      // The typed text *is* the source in this mode, so it takes the slot the
+      // read-only source text occupies otherwise.
+      BorderSurface {
+        width: parent.width
+        visible: root.mode === "input"
+        height: root.inputHeight
+        radius: Style.cornerRadius / 2
+        color: Color.popups.background
+        borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+
+        TextArea {
+          id: inputArea
+          anchors.fill: parent
+          anchors.margins: Style.space(6)
+          placeholderText: "Type or paste text — Enter to translate"
+          color: Color.foreground
+          wrapMode: TextArea.Wrap
+          textFormat: TextEdit.PlainText
+          focus: root.mode === "input"
+          background: null
+          font.family: Style.font.resolvedFamily
+          font.pixelSize: Style.font.body
+          onTextChanged: {
+            root.inputText = text
+            root.inputChanged()
+          }
+          Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Escape) {
+              event.accepted = true
+              root.closeRequested()
+              return
+            }
+            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              // Shift+Enter falls through to TextArea's own newline.
+              if (event.modifiers & Qt.ShiftModifier) return
+              event.accepted = true
+              root.submitRequested()
+            }
+          }
+        }
+      }
+
       // ------------------------------------------------------------- source
       // Shown so the fallback path is falsifiable: when the synthetic Ctrl+C
       // grabs the wrong thing, this is how you see it.
       Text {
         width: parent.width
-        visible: root.sourceText !== ""
+        visible: root.mode !== "input" && root.sourceText !== ""
         text: root.sourceText
         color: Color.muted
         elide: Text.ElideRight
@@ -107,7 +166,7 @@ Item {
 
       PanelSeparator {
         width: parent.width
-        visible: root.sourceText !== ""
+        visible: root.mode !== "input" && root.sourceText !== ""
       }
 
       // ------------------------------------------------------------- result

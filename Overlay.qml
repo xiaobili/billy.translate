@@ -17,6 +17,20 @@ PanelWindow {
 
   property string phase: "idle" // idle | picking | translating | done | empty | error
   property bool opened: false
+
+  // Orthogonal to `phase`: "selection" is the pick-a-selection flow, "input"
+  // is the typed-text flow. The phase set is unchanged — input mode uses
+  // empty / translating / done / error, and never picking (no probe runs).
+  property string mode: "selection"
+  // Bound, never assigned here: the TextArea inside Bubble.qml is the only
+  // writer, so the two cannot drift. Ids are file-scoped — Bubble's own
+  // `inputText` is a different property from this one.
+  property string inputText: bubble.inputText
+  // Set when a submit lands while a stream is in flight: cancel() is async, so
+  // the new request has to wait for finished() rather than pressing start()
+  // into the streaming guard.
+  property bool pendingSubmit: false
+
   property var cursorPos: null
   property string selectedText: ""
   property string directionLabel: ""
@@ -84,15 +98,25 @@ PanelWindow {
   // ------------------------------------------------------------------- state
 
   function open(payloadJson) {
+    var payload = {}
+    try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = {} }
     // `opened` is set before the pick runs, so from this moment the shell
     // facade already reports the plugin open: a second hotkey press takes the
-    // toggle's hide branch and cancels rather than re-picking. The pick below
-    // runs once, on this call. (R13)
+    // toggle's hide branch and cancels rather than re-picking. (R13)
     root.opened = true
     root.copied = false
     root.failureText = ""
     root.selectedText = ""
     root.directionLabel = ""
+    if (payload.mode === "input") {
+      root.mode = "input"
+      // Nothing to pick: the surface can appear at once.
+      root.phase = "empty"
+      transport.cancel()
+      Qt.callLater(function () { bubble.selectAllInput() })
+      return
+    }
+    root.mode = "selection"
     root.phase = "picking"
     transport.cancel()
     probe.queryCursor()
@@ -106,11 +130,35 @@ PanelWindow {
     root.selectedText = ""
     root.failureText = ""
     root.copied = false
+    root.pendingSubmit = false
   }
 
   function toggle() {
     if (root.opened) root.close()
     else root.open("{}")
+  }
+
+  function inputMode() {
+    if (root.opened && root.mode === "input") {
+      root.close()
+      return
+    }
+    root.open('{"mode":"input"}')
+  }
+
+  function submitInput() {
+    if (root.mode !== "input") return
+    if (root.inputText.trim() === "") return
+    if (transport.streaming) {
+      // Cancel and re-submit from finished(): Transport's start() returns
+      // early while a child is still exiting, and cancel() cannot be awaited.
+      root.pendingSubmit = true
+      transport.cancel()
+      return
+    }
+    root.failureText = ""
+    root.phase = "translating"
+    transport.start()
   }
 
   function copyTranslation() {
@@ -158,11 +206,18 @@ PanelWindow {
     config: root.config.ready ? root.config.config : null
     // F2: Transport does not derive the state path — Config owns it.
     dir: root.config.dir
-    text: root.selectedText
+    text: root.mode === "input" ? root.inputText : root.selectedText
     // The phase stays "translating" until the stream ends — the bubble shows
     // whatever has arrived, so there is no need to promote a partial answer
     // to "done" and lose the distinction.
     onFinished: function (outcome) {
+      if (root.pendingSubmit) {
+        root.pendingSubmit = false
+        root.failureText = ""
+        root.phase = "translating"
+        transport.start()
+        return
+      }
       if (transport.output === "") {
         root.failureText = outcome === "error" ? transport.errorText : "No translation returned."
         root.phase = "error"
@@ -184,7 +239,7 @@ PanelWindow {
   // Ui/SpeedTestOverlay.qml.
   Item {
     anchors.fill: parent
-    focus: true
+    focus: root.mode !== "input"
     Keys.onEscapePressed: root.close()
   }
 
@@ -194,6 +249,7 @@ PanelWindow {
     id: bubble
     placement: root.placement
     phase: root.phase
+    mode: root.mode
     sourceText: root.selectedText
     translation: transport.output
     errorText: root.failureText
@@ -201,6 +257,8 @@ PanelWindow {
     copied: root.copied
     onCopyRequested: root.copyTranslation()
     onCloseRequested: root.close()
+    onInputChanged: root.directionLabel = Translate.directionLabel(root.inputText)
+    onSubmitRequested: root.submitInput()
   }
 
   IpcHandler {
@@ -211,6 +269,7 @@ PanelWindow {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function copy(): void { root.copyTranslation() }
+    function input(): void { root.inputMode() }
     function ping(): string { return "ok" }
   }
 }
