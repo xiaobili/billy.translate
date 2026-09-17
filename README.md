@@ -24,10 +24,11 @@ Third-party plugins are not enabled by default. The id has to be in
 | *(unbound)* | Copy the translation — use the bubble's copy button, or the IPC verb below |
 | `Esc`, or click outside | Dismiss |
 
-Bind them in `~/.config/hypr/bindings.lua`:
+Bind the chords in `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("ALT + I", "Translate typing", "omarchy-shell billy.translate input")
 -- Copy has no chord on this machine: use the bubble's copy button,
 -- or `omarchy-shell billy.translate copy`.
 ```
