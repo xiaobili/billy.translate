@@ -144,13 +144,10 @@ Item {
       // -------------------------------------------------------------- input
       // The typed text *is* the source in this mode, so it takes the slot the
       // read-only source text occupies otherwise.
-      BorderSurface {
+      Item {
         width: parent.width
         visible: root.mode === "input"
         height: root.inputHeight
-        radius: Style.cornerRadius / 2
-        color: Color.popups.background
-        borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
 
         // A TextArea carries no scroll state of its own — no contentY, no
         // internal Flickable — so capping its height would simply cut the caret
@@ -214,6 +211,11 @@ Item {
             }
           }
         }
+      }
+
+      PanelSeparator {
+        width: parent.width
+        visible: root.mode === "input"
       }
 
       // ------------------------------------------------------------- source

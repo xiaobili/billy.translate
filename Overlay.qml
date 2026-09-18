@@ -122,6 +122,9 @@ PanelWindow {
       root.discardNextFinish = transport.streaming
       transport.cancel()
       root.refreshInputLabel()
+      // Fetch the current cursor position so the bubble appears near the cursor,
+      // not at the stale position left over from the previous selection mode.
+      probe.queryCursor()
       Qt.callLater(function () { bubble.selectAllInput() })
       return
     }
