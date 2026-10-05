@@ -18,6 +18,7 @@ echo
 echo "== pure functions =="
 node tests/layout.test.js || status=1
 node tests/translate.test.js || status=1
+bash tests/ocr-progress.test.sh || status=1
 
 echo
 echo "== bin/ scripts =="

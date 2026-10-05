@@ -12,7 +12,7 @@ Item {
 
   // Set by Overlay.qml each time the cursor moves or the content resizes.
   property var placement: ({ x: 0, y: 0 })
-  property string phase: "done" // translating | done | empty | error
+  property string phase: "done" // recognizing | translating | done | empty | error
   property string sourceText: ""
   property string translation: ""
   property string errorText: ""
@@ -238,6 +238,27 @@ Item {
         visible: root.mode !== "input" && root.sourceText !== ""
       }
 
+      Row {
+        id: recognizingStatus
+        width: parent.width
+        visible: root.phase === "recognizing"
+        spacing: Style.space(8)
+
+        BusyIndicator {
+          width: Style.space(18)
+          height: width
+          running: recognizingStatus.visible
+        }
+
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Recognizing screenshot..."
+          color: Color.muted
+          font.family: Style.font.resolvedFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+      }
+
       // ------------------------------------------------------------- result
       // One node for the answer in every state: partial while streaming,
       // final when done, or the failure reason when nothing arrived at all.
@@ -246,7 +267,7 @@ Item {
       Flickable {
         id: resultView
         width: parent.width
-        visible: root.phase !== "empty"
+        visible: root.phase !== "empty" && root.phase !== "recognizing"
         height: Math.min(resultText.implicitHeight, root.resultCap)
         opacity: root.stale ? 0.6 : 1
         contentWidth: width
@@ -261,6 +282,7 @@ Item {
           text: {
             if (root.phase === "error" && root.translation === "") return root.errorText
             if (root.phase === "empty") return ""
+            if (root.phase === "recognizing") return ""
             return root.phase === "translating" ? root.translation + "▌" : root.translation
           }
           color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground

@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# Captures a selected region, signals that selection is complete, then runs OCR.
+set -uo pipefail
+
+state_home="${XDG_STATE_HOME:-$HOME/.local/state}"
+easyocr_python="${EASYOCR_PYTHON:-$state_home/omarchy/translate/easyocr/.venv/bin/python}"
+easyocr_script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/easyocr-stdin.py"
+tesseract_bin="${OCR_TESSERACT_BIN:-$(command -v tesseract || true)}"
+magick_bin="${OCR_MAGICK_BIN:-$(command -v magick || true)}"
+config_path="${OCR_CONFIG_PATH:-$state_home/omarchy/translate/config.json}"
+stubs="$(mktemp -d)" || exit 1
+worker_pid=""
+
+config_value() {
+  local key="$1"
+  local fallback="$2"
+  local value=""
+  if [ -r "$config_path" ] && command -v jq >/dev/null 2>&1; then
+    value="$(jq -r --arg key "$key" '.[$key] | select(type == "string" and length > 0)' \
+      "$config_path" 2>/dev/null || true)"
+  fi
+  printf '%s' "${value:-$fallback}"
+}
+
+ocr_engine="$(config_value ocrEngine tesseract)"
+ocr_languages="${OMARCHY_OCR_LANGS:-$(config_value ocrLanguages chi_sim+eng)}"
+
+cleanup() {
+  local exit_code=$?
+  trap - EXIT TERM INT
+  if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
+    kill -TERM -- "-$worker_pid" 2>/dev/null || true
+    wait "$worker_pid" 2>/dev/null || true
+  fi
+  rm -rf "$stubs"
+  exit "$exit_code"
+}
+
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+case "$ocr_engine" in
+  tesseract)
+    if [ ! -x "$tesseract_bin" ]; then
+      printf 'Tesseract executable not found: %s\n' "$tesseract_bin" >&2
+      exit 1
+    fi
+    cat > "$stubs/tesseract" <<'STUB'
+#!/usr/bin/env bash
+exec "$OCR_TESSERACT_BIN" "$@"
+STUB
+    chmod +x "$stubs/tesseract"
+    export OCR_TESSERACT_BIN="$tesseract_bin"
+    ;;
+  easyocr)
+    if [ ! -x "$easyocr_python" ]; then
+      printf 'EasyOCR Python environment not found: %s\n' "$easyocr_python" >&2
+      exit 1
+    fi
+    cat > "$stubs/tesseract" <<'STUB'
+#!/usr/bin/env bash
+    exec "$EASYOCR_PYTHON" "$EASYOCR_SCRIPT"
+STUB
+    chmod +x "$stubs/tesseract"
+    export EASYOCR_PYTHON="$easyocr_python"
+    export EASYOCR_SCRIPT="$easyocr_script"
+    ;;
+  *)
+    printf 'Unsupported OCR engine: %s\n' "$ocr_engine" >&2
+    exit 1
+    ;;
+esac
+
+export OCR_MAGICK_BIN="$magick_bin"
+export OMARCHY_OCR_LANGS="$ocr_languages"
+export OCR_LANGUAGES="$ocr_languages"
+export OCR_CAPTURE_IMAGE="$stubs/selection.png"
+export OCR_TEXT_OUTPUT="$stubs/recognized.txt"
+
+cat > "$stubs/ocr-worker" <<'WORKER'
+#!/usr/bin/env bash
+set -uo pipefail
+
+freeze_pid=""
+cleanup_freeze() {
+  if [ -n "$freeze_pid" ]; then
+    kill "$freeze_pid" 2>/dev/null || true
+    wait "$freeze_pid" 2>/dev/null || true
+    freeze_pid=""
+  fi
+}
+trap cleanup_freeze EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+for tool in hyprpicker slurp grim; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    printf 'Required screenshot command not found: %s\n' "$tool" >&2
+    exit 1
+  fi
+done
+
+# Keep the screen frozen until grim has finished capturing the selected area.
+hyprpicker -r -z >/dev/null 2>&1 &
+freeze_pid=$!
+sleep 0.1
+selection="$(slurp 2>/dev/null)" || exit 1
+[ -n "$selection" ] || exit 1
+grim -g "$selection" "$OCR_CAPTURE_IMAGE" || exit 1
+cleanup_freeze
+trap - EXIT
+
+printf 'OCR_SELECTION_READY\n' >&2
+ocr_args=(stdin stdout --oem 1 --psm 6 -l "$OCR_LANGUAGES" --dpi 300 -c preserve_interword_spaces=1)
+if [ -n "$OCR_MAGICK_BIN" ]; then
+  "$OCR_MAGICK_BIN" "$OCR_CAPTURE_IMAGE" -filter Lanczos -resize 200% png:- |
+    tesseract "${ocr_args[@]}" > "$OCR_TEXT_OUTPUT" 2>/dev/null
+else
+  cat "$OCR_CAPTURE_IMAGE" | tesseract "${ocr_args[@]}" > "$OCR_TEXT_OUTPUT" 2>/dev/null
+fi
+exit_code=$?
+[ "$exit_code" -eq 0 ] || exit "$exit_code"
+WORKER
+chmod +x "$stubs/ocr-worker"
+
+setsid env PATH="$stubs:$PATH" "$stubs/ocr-worker" &
+worker_pid=$!
+wait "$worker_pid"
+exit_code=$?
+worker_pid=""
+[ "$exit_code" -eq 0 ] || exit "$exit_code"
+[ -s "$stubs/recognized.txt" ] || exit 1
+cat "$stubs/recognized.txt"

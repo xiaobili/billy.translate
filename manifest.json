@@ -5,8 +5,12 @@
   "version": "0.1.0",
   "author": "Billy",
   "license": "MIT",
-  "description": "Select text, press a key, read the translation in a bubble at the cursor.",
-  "kinds": ["overlay"],
+  "description": "Translate selected text or OCR a screen region into a bubble at the cursor.",
+  "kinds": [
+    "overlay"
+  ],
   "keepLoaded": true,
-  "entryPoints": { "overlay": "Overlay.qml" }
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  }
 }

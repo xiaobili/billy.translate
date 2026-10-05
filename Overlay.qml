@@ -15,7 +15,7 @@ PanelWindow {
 
   property var manifest: null
 
-  property string phase: "idle" // idle | picking | translating | done | empty | error
+  property string phase: "idle" // idle | picking | recognizing | translating | done | empty | error
   property bool opened: false
 
   // Orthogonal to `phase`: "selection" is the pick-a-selection flow, "input"
@@ -106,6 +106,8 @@ PanelWindow {
   function open(payloadJson) {
     var payload = {}
     try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = {} }
+    root.ocrLaunchTimer.stop()
+    probe.cancelOcrText()
     // `opened` is set before the pick runs, so from this moment the shell
     // facade already reports the plugin open: a second hotkey press takes the
     // toggle's hide branch and cancels rather than re-picking. (R13)
@@ -128,16 +130,19 @@ PanelWindow {
       Qt.callLater(function () { bubble.selectAllInput() })
       return
     }
-    root.mode = "selection"
+    root.mode = payload.mode === "ocr" ? "ocr" : "selection"
     root.phase = "picking"
     root.pendingSubmit = false
     root.discardNextFinish = transport.streaming
     transport.cancel()
     probe.queryCursor()
-    probe.pickText()
+    if (root.mode === "ocr") root.ocrLaunchTimer.start()
+    else probe.pickText()
   }
 
   function close() {
+    root.ocrLaunchTimer.stop()
+    probe.cancelOcrText()
     transport.cancel()
     root.opened = false
     root.phase = "idle"
@@ -158,6 +163,14 @@ PanelWindow {
       return
     }
     root.open('{"mode":"input"}')
+  }
+
+  function ocrMode() {
+    if (root.opened && root.mode === "ocr") {
+      root.close()
+      return
+    }
+    root.open('{"mode":"ocr"}')
   }
 
   function submitInput() {
@@ -198,6 +211,14 @@ PanelWindow {
     onTriggered: root.copied = false
   }
 
+  property Timer ocrLaunchTimer: Timer {
+    interval: 120
+    onTriggered: {
+      if (!root.opened || root.mode !== "ocr" || root.phase !== "picking") return
+      probe.pickOcrText()
+    }
+  }
+
   // ---------------------------------------------------------------- components
 
   property Config config: Config {}
@@ -209,18 +230,22 @@ PanelWindow {
       root.failureText = message
       root.phase = "empty"
     }
+    onOcrSelectionReady: function () {
+      if (!root.opened || root.mode !== "ocr" || root.phase !== "picking") return
+      root.phase = "recognizing"
+    }
     onTextReady: function (text) {
       // A second hotkey press inside the pick window takes the toggle's hide
       // branch, but the pick is already in flight: without this, its late
       // textReady starts a full translation behind a closed overlay.
-      if (!root.opened || root.mode !== "selection") return
+      if (!root.opened || root.mode === "input") return
       root.selectedText = text
       root.directionLabel = Translate.directionLabel(text)
       root.phase = "translating"
       transport.start()
     }
     onTextFailed: function (message) {
-      if (!root.opened || root.mode !== "selection") return
+      if (!root.opened || root.mode === "input") return
       root.failureText = message
       root.phase = "empty"
     }
@@ -301,6 +326,7 @@ PanelWindow {
     function toggle(): void { root.toggle() }
     function copy(): void { root.copyTranslation() }
     function input(): void { root.inputMode() }
+    function ocr(): void { root.ocrMode() }
     function ping(): string { return "ok" }
   }
 }

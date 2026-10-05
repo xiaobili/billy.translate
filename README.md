@@ -17,17 +17,19 @@ Third-party plugins are not enabled by default. The id has to be in
 
 ## Keys
 
-| Key | Action |
-|---|---|
-| `ALT + D` | Translate the selection; press again to dismiss |
-| `ALT + I` | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
-| *(unbound)* | Copy the translation — use the bubble's copy button, or the IPC verb below |
-| `Esc`, or click outside | Dismiss |
+| Key                     | Action                                                                     |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `ALT + D`               | Translate the selection; press again to dismiss                            |
+| `ALT + O`               | Select a screen region, OCR it, and translate the text                     |
+| `ALT + I`               | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
+| *(unbound)*             | Copy the translation — use the bubble's copy button, or the IPC verb below |
+| `Esc`, or click outside | Dismiss                                                                    |
 
 Bind the chords in `~/.config/hypr/bindings.lua`:
 
 ```lua
 o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.translate '{}'")
+o.bind("ALT + O", "Translate screenshot text", "omarchy-shell billy.translate ocr")
 o.bind("ALT + I", "Translate typing", "omarchy-shell billy.translate input")
 -- Copy has no chord on this machine: use the bubble's copy button,
 -- or `omarchy-shell billy.translate copy`.
@@ -49,20 +51,35 @@ from under you once it was already visible.
 The draft lives in memory: it survives closing the bubble and comes back
 selected next time, but a shell restart clears it.
 
+## Screenshot OCR
+
+`ALT + O` opens a region selector. As soon as the screenshot is captured, the
+translation panel appears with a recognition spinner; OCR and translation then
+continue in the background.
+The OCR engine is selected in `~/.local/state/omarchy/translate/config.json`:
+`ocrEngine` defaults to `tesseract`; set it to `easyocr` to use the optional
+EasyOCR virtual environment. The default Tesseract engine needs no extra setup;
+run `./tools/install-easyocr.sh` only if you choose EasyOCR. Both choices use
+Omarchy's region selector, enlarge the captured image 2x in memory, and leave
+the clipboard unchanged. EasyOCR runs in CPU mode and downloads model weights
+on first use to `~/.EasyOCR/model` if they are not cached.
+
 ## Configuration
 
 `~/.local/state/omarchy/translate/config.json` (mode 0600), written on first
 run from the chat plugin's config:
 
-| Key | Meaning |
-|---|---|
-| `baseUrl` | Any OpenAI-compatible root, e.g. `https://api.deepseek.com/v1` |
-| `model` | Model id |
-| `apiKey` | Bearer token; leave empty for a local server that needs none |
-| `systemPrompt` | Empty uses the built-in translation prompt |
-| `temperature` | `0.2` by default — translation wants determinism |
-| `maxTokens` | `0` means "do not send the field" |
-| `timeoutSec` | Request timeout, `60` by default |
+| Key            | Meaning                                                        |
+| -------------- | -------------------------------------------------------------- |
+| `baseUrl`      | Any OpenAI-compatible root, e.g. `https://api.deepseek.com/v1` |
+| `model`        | Model id                                                       |
+| `apiKey`       | Bearer token; leave empty for a local server that needs none   |
+| `systemPrompt` | Empty uses the built-in translation prompt                     |
+| `temperature`  | `0.2` by default — translation wants determinism               |
+| `maxTokens`    | `0` means "do not send the field"                              |
+| `timeoutSec`   | Request timeout, `60` by default                               |
+| `ocrEngine`    | `tesseract` (default) or `easyocr`                             |
+| `ocrLanguages` | `chi_sim+eng` by default; language codes separated by `+`      |
 
 The request disables the provider's thinking mode (`thinking: {type: "disabled"}`).
 This tool only translates, and on DeepSeek thinking mode also ignores
@@ -111,7 +128,7 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 ```
 
 Covers QML syntax (`qmllint`'s `[syntax]` class only), the pure functions in
-`Layout.js` and `Translate.js`, both `bin/` scripts, and one static assertion on
+`Layout.js` and `Translate.js`, the `bin/` scripts, and one static assertion on
 `Transport.qml`. The QML layer has no
 harness — after any QML edit, restart the shell rather than trusting a
 hot-reload, because a plugin that fails to compile keeps reporting the stale

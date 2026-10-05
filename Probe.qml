@@ -13,11 +13,13 @@ QtObject {
 
   signal cursorReady(var pos)
   signal cursorFailed(string message)
+  signal ocrSelectionReady()
   signal textReady(string text)
   signal textFailed(string message)
 
   readonly property string cursorScript: root.pluginDir + "/bin/cursor-pos"
   readonly property string pickScript: root.pluginDir + "/bin/pick-text"
+  readonly property string ocrScript: root.pluginDir + "/bin/ocr-text"
 
   function queryCursor() {
     if (root.pluginDir === "") {
@@ -33,6 +35,18 @@ QtObject {
       return
     }
     root.pickProcess.running = true
+  }
+
+  function pickOcrText() {
+    if (root.pluginDir === "") {
+      root.textFailed("Plugin directory is unknown.")
+      return
+    }
+    root.ocrProcess.running = true
+  }
+
+  function cancelOcrText() {
+    if (root.ocrProcess.running) root.ocrProcess.running = false
   }
 
   // "<screen> <x> <y> <w> <h>", on one line.
@@ -99,6 +113,27 @@ QtObject {
       var text = String(pickOut.text || "")
       if (exitCode !== 0 || text.trim() === "") {
         root.textFailed("No text selected.")
+        return
+      }
+      root.textReady(text)
+    }
+  }
+
+  property Process ocrProcess: Process {
+    command: ["bash", "-c", "exec \"$1\"", "bash", root.ocrScript]
+    stderr: SplitParser {
+      onRead: function (line) {
+        if (String(line).trim() === "OCR_SELECTION_READY") root.ocrSelectionReady()
+      }
+    }
+    stdout: StdioCollector {
+      id: ocrOut
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      var text = String(ocrOut.text || "")
+      if (exitCode !== 0 || text.trim() === "") {
+        root.textFailed("No text found in the selected region.")
         return
       }
       root.textReady(text)

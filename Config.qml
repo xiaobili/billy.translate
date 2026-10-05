@@ -35,8 +35,22 @@ QtObject {
       systemPrompt: "",
       temperature: 0.2,
       maxTokens: 0,
-      timeoutSec: 60
+      timeoutSec: 60,
+      ocrEngine: "tesseract",
+      ocrLanguages: "chi_sim+eng"
     }
+  }
+
+  function persistOcrDefaults() {
+    if (!root.dirsReady || !root.configLoaded) return
+    var raw = null
+    try {
+      raw = JSON.parse(root.file.text())
+    } catch (e) {
+      return
+    }
+    if (!raw || typeof raw !== "object") return
+    if (raw.ocrEngine === undefined || raw.ocrLanguages === undefined) root.save()
   }
 
   // Anything the file does not define falls back to the default, so a config
@@ -96,6 +110,7 @@ QtObject {
       }
       root.config = root.normalize(parsed)
       root.configLoaded = true
+      root.persistOcrDefaults()
     }
     onLoadFailed: {
       // No file yet is the first run, not an error: seed from chat and write
