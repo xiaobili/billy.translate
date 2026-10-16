@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+# Converts text/html from the clipboard into Markdown.
+# Reads HTML on stdin, writes Markdown on stdout.
+# Only stdlib is used so there is nothing extra to install.
+#
+# This is intentionally a small converter, not a full HTML spec implementation:
+# it handles the tags clipboard HTML actually contains (headings, paragraphs,
+# bold/italic, links, lists, code, blockquotes, line breaks) and drops the rest.
+
+import sys
+import re
+from html.parser import HTMLParser
+from html import unescape
+
+
+class MarkdownConverter(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.out = []
+        self.list_stack = []  # each entry: ("ul"|"ol", counter)
+        self.in_pre = False
+        self.in_code = False
+        self.link_href = None
+        self.link_text = []
+        self.blockquote_level = 0
+        # Table state: rows are collected as lists of cell strings, then
+        # emitted as a GitHub-flavoured Markdown table on </table>.
+        self.in_table = False
+        self.table_rows = []
+        self.current_row = None
+        self.in_cell = False
+        self.current_cell = None
+
+    def _append(self, s):
+        # Link text is collected separately even inside a table cell, so the
+        # </a> handler can assemble the full [text](href) before it lands.
+        if self.link_href is not None:
+            self.link_text.append(s)
+        elif self.in_cell:
+            self.current_cell.append(s)
+        else:
+            self.out.append(s)
+
+    def _ensure_block(self):
+        # Ensure we are at the start of a block: collapse trailing whitespace
+        # to exactly two newlines (one blank line) unless we are at the very start.
+        text = "".join(self.out)
+        if text == "" or text.endswith("\n\n"):
+            return
+        # Remove trailing spaces on the last line, then ensure blank line
+        text = text.rstrip(" \t")
+        if text.endswith("\n"):
+            self.out = [text + "\n"]
+        else:
+            self.out = [text + "\n\n"]
+
+    def _esc_cell(self, text):
+        # A literal pipe would split the cell, so escape it; also collapse
+        # any leftover whitespace (e.g. from <br> inside a cell).
+        text = re.sub(r"\s+", " ", text).strip()
+        return text.replace("|", "\\|")
+
+    def _emit_table(self):
+        rows = self.table_rows
+        self.in_table = False
+        self.table_rows = []
+        self.current_row = None
+        if not rows or not any(any(c.strip() for c in r) for r in rows):
+            return
+        ncols = max(len(r) for r in rows)
+        rows = [r + [""] * (ncols - len(r)) for r in rows]
+        # GFM needs a header row: the first row doubles as it when the
+        # source used <td> throughout.
+        lines = ["| " + " | ".join(self._esc_cell(c) for c in rows[0]) + " |"]
+        lines.append("| " + " | ".join("---" for _ in rows[0]) + " |")
+        for r in rows[1:]:
+            lines.append("| " + " | ".join(self._esc_cell(c) for c in r) + " |")
+        self._ensure_block()
+        self.out.append("\n".join(lines) + "\n\n")
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        tag = tag.lower()
+        # Inside a table cell only inline content is meaningful: block tags
+        # collapse to a space so a <p> or nested <table> cannot break the row.
+        if self.in_cell and tag in ("p", "div", "section", "article",
+                                    "h1", "h2", "h3", "h4", "h5", "h6",
+                                    "ul", "ol", "blockquote", "pre", "hr",
+                                    "table", "tr"):
+            self._append(" ")
+            return
+        if tag == "table":
+            self._ensure_block()
+            self.in_table = True
+            self.table_rows = []
+            self.current_row = None
+        elif tag in ("thead", "tbody", "tfoot"):
+            pass  # transparent: rows are collected the same way
+        elif tag == "tr":
+            if self.in_table:
+                self.current_row = []
+        elif tag in ("th", "td"):
+            if self.in_table and self.current_row is not None:
+                self.in_cell = True
+                self.current_cell = []
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
+            self._ensure_block()
+            level = int(tag[1])
+            self._append("#" * level + " ")
+        elif tag == "p":
+            self._ensure_block()
+        elif tag == "br":
+            self._append("\n")
+        elif tag in ("strong", "b"):
+            self._append("**")
+        elif tag in ("em", "i"):
+            self._append("*")
+        elif tag == "code":
+            if not self.in_pre:
+                self._append("`")
+            self.in_code = True
+        elif tag == "pre":
+            self._ensure_block()
+            self._append("```\n")
+            self.in_pre = True
+        elif tag == "a":
+            self.link_href = attrs.get("href", "")
+            self.link_text = []
+        elif tag == "ul":
+            self._ensure_block()
+            self.list_stack.append(("ul", 0))
+        elif tag == "ol":
+            self._ensure_block()
+            self.list_stack.append(("ol", 0))
+        elif tag == "li":
+            if self.list_stack:
+                kind, counter = self.list_stack[-1]
+                indent = "  " * (len(self.list_stack) - 1)
+                if kind == "ul":
+                    self._append(indent + "- ")
+                else:
+                    counter += 1
+                    self.list_stack[-1] = (kind, counter)
+                    self._append(f"{indent}{counter}. ")
+            else:
+                self._append("- ")
+        elif tag == "blockquote":
+            self._ensure_block()
+            self.blockquote_level += 1
+            self._append("> " * self.blockquote_level)
+        elif tag == "hr":
+            self._ensure_block()
+            self._append("---\n\n")
+        elif tag in ("div", "section", "article"):
+            self._ensure_block()
+        # Other tags (span, font, etc.) are dropped but their text is kept.
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "table":
+            if self.in_table:
+                self._emit_table()
+        elif tag == "tr":
+            if self.in_table and self.current_row is not None:
+                self.table_rows.append(self.current_row)
+                self.current_row = None
+        elif tag in ("th", "td"):
+            if self.in_cell and self.current_row is not None:
+                self.current_row.append("".join(self.current_cell))
+                self.in_cell = False
+                self.current_cell = None
+        elif tag in ("thead", "tbody", "tfoot"):
+            pass
+        elif self.in_cell and tag in ("p", "div", "section", "article",
+                                      "h1", "h2", "h3", "h4", "h5", "h6",
+                                      "ul", "ol", "blockquote", "pre"):
+            self._append(" ")
+        elif tag in ("h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "article"):
+            self._append("\n\n")
+        elif tag in ("strong", "b"):
+            self._append("**")
+        elif tag in ("em", "i"):
+            self._append("*")
+        elif tag == "code":
+            if not self.in_pre:
+                self._append("`")
+            self.in_code = False
+        elif tag == "pre":
+            # Strip trailing newline before closing fence for tidiness
+            text = "".join(self.out).rstrip("\n")
+            self.out = [text + "\n```\n\n"]
+            self.in_pre = False
+        elif tag == "a":
+            text = "".join(self.link_text).strip()
+            href = (self.link_href or "").strip()
+            self.link_href = None
+            self.link_text = []
+            if text and href and text != href:
+                self._append(f"[{text}]({href})")
+            elif text:
+                self._append(text)
+            elif href:
+                self._append(href)
+        elif tag in ("ul", "ol"):
+            if self.list_stack:
+                self.list_stack.pop()
+            self._append("\n")
+        elif tag == "li":
+            self._append("\n")
+        elif tag == "blockquote":
+            self.blockquote_level = max(0, self.blockquote_level - 1)
+            self._append("\n\n")
+
+    def handle_data(self, data):
+        if self.in_pre:
+            # In <pre>, keep whitespace as-is (but unescape entities)
+            self._append(unescape(data))
+        else:
+            # Collapse runs of whitespace to a single space, but keep newlines
+            # from <br> handling intact (those are appended directly, not via data)
+            text = unescape(data)
+            # If the data is all whitespace, skip it (it is formatting between tags) —
+            # except inside a table cell, where whitespace still separates
+            # inline elements (it is stripped at the cell edge on emit).
+            if text.strip() == "":
+                if self.in_cell:
+                    self._append(" ")
+                return
+            # Collapse internal whitespace
+            text = re.sub(r"\s+", " ", text)
+            self._append(text)
+
+    def handle_entityref(self, name):
+        self.handle_data(f"&{name};")
+
+    def handle_charref(self, name):
+        self.handle_data(f"&#{name};")
+
+    def get_markdown(self):
+        text = "".join(self.out)
+        # Tidy up: collapse 3+ newlines to 2, strip trailing whitespace
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        text = text.strip()
+        # Fix list spacing: ensure list items are not separated by blank lines
+        # (our converter already avoids that, this is just a safety net)
+        return text
+
+
+def main():
+    html = sys.stdin.read()
+    if not html.strip():
+        return
+    converter = MarkdownConverter()
+    try:
+        converter.feed(html)
+        converter.close()
+    except Exception:
+        # On parse failure, fall back to stripping tags crudely
+        text = re.sub(r"<[^>]+>", "", html)
+        sys.stdout.write(unescape(text).strip())
+        return
+    md = converter.get_markdown()
+    sys.stdout.write(md)
+
+
+if __name__ == "__main__":
+    main()

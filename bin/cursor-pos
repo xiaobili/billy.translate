@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Reports where the cursor is, in the coordinate space a layer-shell surface
+# on that screen uses.
+#
+# Output is one line: <screen-name> <local-x> <local-y> <screen-w> <screen-h>
+# Nothing on stdout and a non-zero exit means the position could not be read.
+#
+# Why a script: the cursor arrives in a *global* layout coordinate, but a layer
+# surface is positioned in its own screen's *local* one. Turning the former
+# into the latter needs the monitor list and the scale factor, and doing it
+# here keeps that arithmetic out of QML and testable from a terminal — which
+# matters, because at scale 1 the arithmetic is an identity and a wrong
+# implementation is indistinguishable from a right one.
+set -uo pipefail
+
+# Overridable so the tests can point the script at a stub. Without this the
+# coordinate conversion cannot be exercised at all on a single scale-1
+# display, which is exactly how an inverted scale factor survived review once
+# already. Mirrors the QMLLINT override in tools/check-syntax.sh.
+HYPRCTL="${HYPRCTL:-hyprctl}"
+
+cursor="$("$HYPRCTL" cursorpos 2>/dev/null)" || exit 1
+# "1551, 1003"
+gx="${cursor%%,*}"
+gy="${cursor##*,}"
+gx="${gx//[!0-9-]/}"
+gy="${gy//[!0-9-]/}"
+[ -n "$gx" ] && [ -n "$gy" ] || exit 1
+
+monitors="$("$HYPRCTL" -j monitors 2>/dev/null)" || exit 1
+[ -n "$monitors" ] || exit 1
+
+# The monitor whose rectangle contains the cursor. No match at all is a
+# failure, not an empty success — the caller cannot act on a blank line.
+#
+# COORDINATE SPACES, which the field names do not reveal: Hyprland reports
+# `width`/`height` in PHYSICAL (mode) pixels but `x`/`y` in the LOGICAL layout
+# space, and `cursorpos` is logical too. So the containment test and the local
+# offsets are logical (no division), while the screen extents are physical and
+# must be divided. Getting this backwards is invisible at scale 1 and picks
+# the wrong monitor entirely on a mixed-scale multi-monitor layout.
+line="$(printf '%s' "$monitors" | jq -r --argjson x "$gx" --argjson y "$gy" '
+  [ .[]
+    # transform 1/3/5/7 rotate the panel, so the LOGICAL extents swap relative
+    # to the mode width/height. Containment must use the same extents the
+    # output reports: testing against the unswapped numbers makes a rotated
+    # monitor match nothing, and the feature silently returns no position.
+    | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
+        then (.height / .scale) else (.width / .scale) end) as $w
+    | (if (.transform == 1 or .transform == 3 or .transform == 5 or .transform == 7)
+        then (.width / .scale) else (.height / .scale) end) as $h
+    | select($x >= .x and $x < (.x + $w) and $y >= .y and $y < (.y + $h))
+    | { name: .name, x: .x, y: .y, w: $w, h: $h }
+  ]
+  | .[0]
+  | if . == null then empty
+    else [ .name,
+           ((($x - .x)) | floor),
+           ((($y - .y)) | floor),
+           (.w | floor),
+           (.h | floor) ]
+    | @tsv
+    end
+')" || exit 1
+[ -n "$line" ] || exit 1
+
+printf '%s\n' "$line" | tr '\t' ' '

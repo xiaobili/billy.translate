@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "billy.translate",
+  "name": "Translate",
+  "version": "0.1.0",
+  "author": "Billy",
+  "license": "MIT",
+  "description": "Translate selected text or OCR a screen region into a bubble at the cursor.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Overlay.qml"
+  }
+}

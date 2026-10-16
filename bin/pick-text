@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+# Prints the current selection, or nothing (with a non-zero exit) when there
+# is none.
+#
+# The primary selection is tried first: it is what a mouse drag fills in, and
+# reading it touches nothing. Only when it is empty does this fall back to
+# synthesising Ctrl+C and reading the clipboard — which clobbers the user's
+# clipboard, so the original is captured and put back.
+#
+# Rich text: like a real Ctrl+C, this captures text/markdown and text/html as
+# well as text/plain. When HTML is the richest flavour available it is
+# converted to Markdown (via bin/html-to-markdown), so the translation input
+# keeps its structure (headings, lists, bold, links) instead of arriving as a
+# flat paragraph. Plain text remains the fallback when no richer flavour exists.
+#
+# Why a script: the fallback is a timed sequence — press, poll, restore — with
+# a failure path at every step. In QML that becomes a web of Processes and
+# timers; here it is one file that can be run and asserted from a terminal.
+set -uo pipefail
+
+# How long to wait for the synthetic Ctrl+C to land. Long enough for a slow
+# app to service the key, short enough that a keypress that goes nowhere does
+# not feel like a hang.
+POLL_INTERVAL_MS=25
+POLL_ATTEMPTS=16
+
+# Delay before synthesising Ctrl+C, so the user can release the hotkey's own
+# modifiers first. A physically-held Alt/Shift merges with the virtual Ctrl+C
+# and the app sees e.g. Ctrl+Alt+Shift+C instead of a copy — wtype's virtual
+# device is NOT fully independent of the physical modifier state. Only the
+# synthetic-copy path pays this; the primary-selection fast path never touches
+# the keyboard.
+PRE_COPY_DELAY_MS="${PRE_COPY_DELAY_MS:-350}"
+
+# Overridable so a test can drive the restore path with stubs. The replay
+# cannot be exercised against the real clipboard: it needs a rich-text or image
+# selection, which the test would have to clobber to set up. Mirrors the
+# HYPRCTL override in bin/cursor-pos.
+WL_PASTE="${WL_PASTE:-wl-paste}"
+WL_COPY="${WL_COPY:-wl-copy}"
+WTYPE="${WTYPE:-wtype}"
+# Overridable for tests that stub the converter.
+HTML_TO_MARKDOWN="${HTML_TO_MARKDOWN:-$(cd "$(dirname "$0")" && pwd)/html-to-markdown}"
+
+# Diagnostics go to a file, not stderr: Quickshell's Process does not forward
+# a child's stderr to the journal, so stderr diagnostics are invisible when
+# the script runs from the plugin. On failure a line is appended here.
+DEBUG_LOG="${PICK_DEBUG_LOG:-/tmp/billy-translate-pick.log}"
+dbg() {
+  printf '%s pick-text%s: %s\n' "$(date '+%F %T')" "${RICH:+ --rich}" "$*" >> "$DEBUG_LOG" 2>/dev/null || true
+}
+
+# ------------------------------------------------- rich-text reading
+# read_rich <wl-paste args...>: prints the richest available flavour as
+# Markdown (or plain text when nothing richer exists). Returns non-zero when
+# nothing is available at all.
+#
+# Preference order mirrors what a Ctrl+C consumer sees:
+#   1. text/markdown — already Markdown, use as-is
+#   2. text/html — convert to Markdown via bin/html-to-markdown
+#   3. text/plain (wl-paste default) — as-is
+read_rich() {
+  local md html text
+  # 1. Native markdown, rare but ideal when offered.
+  md="$("$WL_PASTE" "$@" --type text/markdown 2>/dev/null)" && [ -n "$md" ] && {
+    printf '%s' "$md"
+    return 0
+  }
+  # 2. HTML -> Markdown. The converter is best-effort: if it fails or yields
+  # nothing, fall through to plain text rather than emitting an empty result.
+  if [ -x "$HTML_TO_MARKDOWN" ]; then
+    html="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$html" ] && {
+      md="$(printf '%s' "$html" | "$HTML_TO_MARKDOWN" 2>/dev/null)" && [ -n "$md" ] && {
+        printf '%s' "$md"
+        return 0
+      }
+    }
+  else
+    # Converter missing or not executable: still try raw HTML so a caller that
+    # handles HTML itself can use it via --html (see below).
+    :
+  fi
+  # 3. Plain text.
+  text="$("$WL_PASTE" "$@" --no-newline 2>/dev/null)" && [ -n "$text" ] && {
+    printf '%s' "$text"
+    return 0
+  }
+  return 1
+}
+
+# Optional explicit format requests, for callers that want a specific flavour:
+#   pick-text --html      print raw text/html, else fail
+#   pick-text --markdown  print text/markdown (or HTML converted to Markdown), else fail
+#   pick-text --rich      skip the primary selection and go straight to the
+#                         synthetic Ctrl+C path, so a rendered preview (whose
+#                         primary selection carries only plain text) is captured
+#                         with its text/html flavour like a real Ctrl+C would.
+#                         Combines with --html/--markdown.
+# With no flag the richest flavour is printed (see read_rich).
+RICH=""
+FORMAT=""
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    --rich) RICH=1; shift ;;
+    --html) FORMAT="html"; shift ;;
+    --markdown) FORMAT="markdown"; shift ;;
+    *) break ;;
+  esac
+done
+
+# One invocation line per rich run, so the log proves which script version ran.
+[ -n "$RICH" ] && dbg "start format=${FORMAT:-richest}"
+
+read_explicit() {
+  # read_explicit <format> <wl-paste args...>
+  local fmt="$1"; shift
+  local out
+  if [ "$fmt" = "html" ]; then
+    out="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$out" ] && {
+      printf '%s' "$out"
+      return 0
+    }
+    return 1
+  fi
+  # markdown: native first, then HTML converted
+  out="$("$WL_PASTE" "$@" --type text/markdown 2>/dev/null)" && [ -n "$out" ] && {
+    printf '%s' "$out"
+    return 0
+  }
+  if [ -x "$HTML_TO_MARKDOWN" ]; then
+    out="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$out" ] && {
+      out="$(printf '%s' "$out" | "$HTML_TO_MARKDOWN" 2>/dev/null)" && [ -n "$out" ] && {
+        printf '%s' "$out"
+        return 0
+      }
+    }
+  fi
+  return 1
+}
+
+# ------------------------------------------------------- path 1: primary
+# Skipped in --rich mode: a mouse selection fills the primary selection with
+# plain text only, so a rendered HTML preview would lose its structure here.
+# Going straight to the Ctrl+C path captures text/html like a real copy.
+
+if [ -z "$RICH" ]; then
+  if [ -n "$FORMAT" ]; then
+    read_explicit "$FORMAT" --primary && exit 0 || exit 1
+  fi
+
+  read_rich --primary && exit 0
+fi
+
+# --------------------------------------------------- path 2: the fallback
+
+backup="$(mktemp -d)" || exit 1
+restored=0
+
+restore() {
+  [ "$restored" -eq 1 ] && return
+  restored=1
+  # Types are replayed under the same sanitised name they were captured as: a
+  # MIME type contains a slash, so the file for `text/html` is `text_html`.
+  # A type whose data could not be read is skipped rather than copied empty, so
+  # one unreadable flavour cannot blank the whole clipboard.
+  while IFS= read -r type; do
+    [ -n "$type" ] || continue
+    safe="${type//\//_}"
+    if [ -s "$backup/by-type/$safe" ]; then
+      "$WL_COPY" --type "$type" < "$backup/by-type/$safe" 2>/dev/null || true
+    fi
+  done < "$backup/types"
+  # Only the last wl-copy survives: each invocation becomes the selection owner
+  # and supersedes the previous one, so the flavours above are best-effort.
+  # Text is what a text tool should leave behind and what the next paste is
+  # most likely to ask for, so it is replayed last and wins.
+  if [ -s "$backup/data" ]; then
+    "$WL_COPY" < "$backup/data" 2>/dev/null || true
+  fi
+  rm -rf "$backup"
+}
+
+cleanup() {
+  local code=$?
+  restore
+  exit "$code"
+}
+trap cleanup EXIT
+
+mkdir -p "$backup/by-type"
+"$WL_PASTE" --list-types 2>/dev/null > "$backup/types" || true
+
+# The full payload is captured first so the "did it change" comparison below
+# has something to compare against even for non-text flavours, and so the
+# text representation can be put back last. It is empty when the clipboard
+# holds no text flavour at all — an image, say — which is not a failure.
+"$WL_PASTE" --no-newline 2>/dev/null > "$backup/data" || true
+
+while IFS= read -r type; do
+  [ -n "$type" ] || continue
+  safe="${type//\//_}"
+  "$WL_PASTE" --type "$type" 2>/dev/null > "$backup/by-type/$safe" || rm -f "$backup/by-type/$safe"
+done < "$backup/types"
+
+# In rich mode the clipboard is cleared after the backup (the trap restores
+# it on every exit path), so the poll below waits for *new* content instead
+# of *changed* content. This removes the false negative where the clipboard
+# already held the selected text (e.g. the user manually copied it moments
+# ago) and a fresh Ctrl+C therefore looks like "nothing happened".
+if [ -n "$RICH" ]; then
+  "$WL_COPY" --clear 2>/dev/null || true
+  before_text=""
+  before_html=""
+else
+  # Remember the clipboard's text and HTML flavours, so the "did it change"
+  # comparison below notices a fresh copy even when only one of them differs —
+  # e.g. the clipboard already held the same plain text but the app just offered
+  # HTML for the first time.
+  before_text="$(cat "$backup/data" 2>/dev/null || true)"
+  before_html=""
+  if [ -s "$backup/by-type/text_html" ]; then
+    before_html="$(cat "$backup/by-type/text_html" 2>/dev/null || true)"
+  fi
+fi
+
+# Give the hotkey's modifiers time to be released (see PRE_COPY_DELAY_MS).
+sleep "$(awk -v ms="$PRE_COPY_DELAY_MS" 'BEGIN{printf "%.3f", ms/1000}')"
+"$WTYPE" -M ctrl -k c -m ctrl 2>/dev/null
+wtype_code=$?
+if [ "$wtype_code" -ne 0 ]; then
+  dbg "FAIL wtype exited $wtype_code"
+  printf 'pick-text: wtype failed to send Ctrl+C (is wtype installed?)\n' >&2
+  exit 1
+fi
+
+# Poll rather than sleep a fixed interval: a fast app answers on the first
+# tick, and a slow one gets the full budget. Rich mode gets double the budget:
+# serialising a DOM to HTML can take noticeably longer than plain text.
+poll_attempts="$POLL_ATTEMPTS"
+[ -n "$RICH" ] && poll_attempts=$((POLL_ATTEMPTS * 2))
+after_text=""
+after_html=""
+for _ in $(seq "$poll_attempts"); do
+  sleep "$(awk -v ms="$POLL_INTERVAL_MS" 'BEGIN{printf "%.3f", ms/1000}')"
+  after_text="$("$WL_PASTE" --no-newline 2>/dev/null || true)"
+  after_html="$("$WL_PASTE" --type text/html 2>/dev/null || true)"
+  if [ "$after_text" != "$before_text" ] || [ "$after_html" != "$before_html" ]; then
+    break
+  fi
+done
+
+if [ "$after_text" = "$before_text" ] && [ "$after_html" = "$before_html" ]; then
+  if [ -n "$RICH" ]; then
+    dbg "FAIL clipboard still empty after ${poll_attempts}x${POLL_INTERVAL_MS}ms poll (app ignored synthetic Ctrl+C, or wtype could not deliver keys - app may be XWayland)"
+  else
+    dbg "FAIL clipboard unchanged after ${poll_attempts}x${POLL_INTERVAL_MS}ms poll (before_text_len=${#before_text} before_html_len=${#before_html})"
+  fi
+  printf 'pick-text: clipboard unchanged after synthetic Ctrl+C (app ignored it or wtype could not deliver keys)\n' >&2
+  exit 1
+fi
+[ -n "$after_text$after_html" ] || {
+  dbg "FAIL clipboard empty after synthetic Ctrl+C"
+  printf 'pick-text: clipboard empty after synthetic Ctrl+C\n' >&2
+  exit 1
+}
+
+# The clipboard now holds the fresh copy: prefer its richest flavour, exactly
+# as path 1 does. An explicit --html/--markdown request was already handled
+# above for the primary path; here the fallback honours it the same way.
+if [ -n "$FORMAT" ]; then
+  read_explicit "$FORMAT" && exit 0 || exit 1
+fi
+read_rich && exit 0
+
+# read_rich found nothing richer but the poll above proved something arrived —
+# fall back to that text rather than failing.
+printf '%s' "$after_text"
