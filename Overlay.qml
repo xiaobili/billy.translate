@@ -328,6 +328,7 @@ PanelWindow {
     placement: root.placement
     phase: root.phase
     mode: root.mode
+    richPick: root.richPick
     sourceText: root.selectedText
     translation: transport.output
     errorText: root.failureText

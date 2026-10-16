@@ -22,6 +22,11 @@ Item {
   property bool stale: false
 
   property string mode: "selection"
+  // True when the selection was captured via synthetic Ctrl+C for its
+  // text/html flavour (rich mode): the translation keeps Markdown structure
+  // and the bubble renders it. Set by Overlay.qml; plain selection shares
+  // mode === "selection" but renders as plain text.
+  property bool richPick: false
   property string inputText: ""
   // The input area's own cap, and what Task 3's budget reads. `inputArea` is
   // the TextArea further down this same file.
@@ -55,6 +60,12 @@ Item {
   // Math.min the no-caption column lands exactly on bodyBudget with zero
   // headroom, which is how the overflow went unnoticed.
   readonly property int captionHeight: errorCaption.visible ? errorCaption.implicitHeight + body.spacing : 0
+  // Markdown rendering is opt-in per mode. The input field is user-authored
+  // (deliberate Markdown is welcome) and rich mode explicitly captures
+  // formatting; plain selection and OCR text is arbitrary — its `*`, `#`,
+  // backticks and `<...>` are usually literal characters, so MarkdownText
+  // would mangle the display.
+  readonly property bool renderMarkdown: root.mode === "input" || root.richPick
   readonly property int resultCap: root.mode === "input"
     ? Math.min(root.maxResultHeight, Math.max(0,
         root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing - root.captionHeight))
@@ -300,12 +311,14 @@ Item {
         Text {
           id: resultText
           width: resultView.width
-          // Markdown rendering: the translation may contain headings, lists,
-          // bold/italic, code and links (either from a rich-text selection or
-          // from the model preserving structure). Text.MarkdownText renders
-          // those; plain text without Markdown syntax renders unchanged.
-          // The streaming caret is appended as plain text so a partial
-          // Markdown construct still shows progress rather than vanishing.
+          // Markdown rendering (input and rich modes only — see
+          // root.renderMarkdown): the translation may contain headings,
+          // lists, bold/italic, code and links (either from a rich-text
+          // selection or from the model preserving structure).
+          // Text.MarkdownText renders those; plain text without Markdown
+          // syntax renders unchanged. The streaming caret is appended as
+          // plain text so a partial Markdown construct still shows progress
+          // rather than vanishing.
           //
           // MarkdownText parses `<...>` as inline HTML and drops it, so a
           // tag-shaped sequence that survived translation (List<String>,
@@ -313,13 +326,16 @@ Item {
           // its `<` to `&lt;` renders it literally; code spans and fenced
           // blocks are already literal and are left alone. Copy still takes
           // the unescaped `translation`, so pasting keeps the original text.
-          textFormat: Text.MarkdownText
+          // Plain-text modes skip the escape: there is nothing to parse, and
+          // `&lt;` would show up verbatim.
+          textFormat: root.renderMarkdown ? Text.MarkdownText : Text.PlainText
           text: {
-            if (root.phase === "error" && root.translation === "") return Translate.escapeHtmlTags(root.errorText)
-            if (root.phase === "empty") return ""
-            if (root.phase === "recognizing") return ""
-            var body = root.phase === "translating" ? root.translation + "▌" : root.translation
-            return Translate.escapeHtmlTags(body)
+            var raw
+            if (root.phase === "error" && root.translation === "") raw = root.errorText
+            else if (root.phase === "empty" || root.phase === "recognizing") raw = ""
+            else if (root.phase === "translating") raw = root.translation + "▌"
+            else raw = root.translation
+            return root.renderMarkdown ? Translate.escapeHtmlTags(raw) : raw
           }
           color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground
           wrapMode: Text.Wrap
