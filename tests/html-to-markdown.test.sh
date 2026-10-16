@@ -42,6 +42,34 @@ check "ordered list" \
   "1. first
 2. second"
 
+check "loose list keeps the marker on its item" \
+  "$(printf '<ul><li><p>one</p></li><li><p>two</p></li></ul>' | "$BIN")" \
+  "- one
+
+- two"
+
+check "loose ordered list keeps the marker on its item" \
+  "$(printf '<ol><li><p>first</p></li><li><p>second</p></li></ol>' | "$BIN")" \
+  "1. first
+
+2. second"
+
+check "div inside li stays on the marker line" \
+  "$(printf '<ul><li><div>text</div></li></ul>' | "$BIN")" \
+  "- text"
+
+check "nested list keeps its indentation" \
+  "$(printf '<ul><li>outer<ul><li>inner</li></ul></li></ul>' | "$BIN")" \
+  "- outer
+
+  - inner"
+
+check "loose nested list stays nested, not deeper" \
+  "$(printf '<ul><li><p>outer</p><ul><li><p>inner</p></li></ul></li></ul>' | "$BIN")" \
+  "- outer
+
+  - inner"
+
 check "inline code" \
   "$(printf '<p>use <code>foo()</code> here</p>' | "$BIN")" \
   "use \`foo()\` here"

@@ -88,4 +88,44 @@ check("English text labels to Chinese", T.directionLabel("hello world"), "→ �
 check("CJK among Latin text is enough", T.directionLabel("hello 你好"), "中文 → EN")
 check("one CJK character alone is enough", T.directionLabel("好"), "中文 → EN")
 
+// ------------------------------------------------------ html-tag escaping
+// A tag-shaped `<...>` must render literally instead of being parsed as
+// inline HTML by Text.MarkdownText; lone `<` and `>` already render
+// literally and stay untouched.
+
+check("a generic type is escaped",
+  T.escapeHtmlTags("List<String>"), "List&lt;String>")
+check("a close tag is escaped",
+  T.escapeHtmlTags("a </div> b"), "a &lt;/div> b")
+check("an HTML comment is escaped",
+  T.escapeHtmlTags("<!-- hi -->"), "&lt;!-- hi -->")
+check("a placeholder in translated text is escaped",
+  T.escapeHtmlTags("你好 <name>"), "你好 &lt;name>")
+check("a lone less-than is untouched",
+  T.escapeHtmlTags("a < b"), "a < b")
+check("a greater-than is never escaped",
+  T.escapeHtmlTags("a > b"), "a > b")
+check("a blockquote marker survives",
+  T.escapeHtmlTags("> quoted"), "> quoted")
+check("markdown around the tag is preserved",
+  T.escapeHtmlTags("**bold** <tag> and `code`"), "**bold** &lt;tag> and `code`")
+check("inline code is left alone",
+  T.escapeHtmlTags("use `<div>` here"), "use `<div>` here")
+check("a multi-backtick span is left alone",
+  T.escapeHtmlTags("`` `<b>` ``"), "`` `<b>` ``")
+check("an unmatched backtick run is literal text",
+  T.escapeHtmlTags("a `< b"), "a `< b")
+check("a fenced block is left alone",
+  T.escapeHtmlTags("```\n<div>\n```"), "```\n<div>\n```")
+check("a fenced block with an info string is left alone",
+  T.escapeHtmlTags("```html\n<div>\n```"), "```html\n<div>\n```")
+check("a tilde fence is honoured",
+  T.escapeHtmlTags("~~~\n<x>\n~~~"), "~~~\n<x>\n~~~")
+check("an unclosed fence treats the tail as code",
+  T.escapeHtmlTags("```\n<div>"), "```\n<div>")
+check("text after a closed fence is escaped again",
+  T.escapeHtmlTags("```\n<x>\n```\n<y>"), "```\n<x>\n```\n&lt;y>")
+check("null and undefined are empty",
+  T.escapeHtmlTags(null) + T.escapeHtmlTags(undefined), "")
+
 report()

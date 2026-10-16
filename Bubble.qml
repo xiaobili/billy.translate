@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Quickshell
 import qs.Commons
 import qs.Ui
+import "Translate.js" as Translate
 
 // The card itself: where it sits, what it shows, and the two things you can do
 // to it. Positioning is delegated to Layout.js — this file only supplies the
@@ -224,6 +225,11 @@ Item {
       Text {
         width: parent.width
         visible: root.mode !== "input" && root.sourceText !== ""
+        // PlainText: the preview shows the captured selection verbatim, and
+        // the default AutoText would flip to rich text when the selection
+        // looks like HTML — swallowing the very `<...>` this view exists to
+        // make visible.
+        textFormat: Text.PlainText
         text: root.sourceText
         color: Color.muted
         elide: Text.ElideRight
@@ -300,12 +306,20 @@ Item {
           // those; plain text without Markdown syntax renders unchanged.
           // The streaming caret is appended as plain text so a partial
           // Markdown construct still shows progress rather than vanishing.
+          //
+          // MarkdownText parses `<...>` as inline HTML and drops it, so a
+          // tag-shaped sequence that survived translation (List<String>,
+          // <name>, a literal tag) would vanish from the bubble. Escaping
+          // its `<` to `&lt;` renders it literally; code spans and fenced
+          // blocks are already literal and are left alone. Copy still takes
+          // the unescaped `translation`, so pasting keeps the original text.
           textFormat: Text.MarkdownText
           text: {
-            if (root.phase === "error" && root.translation === "") return root.errorText
+            if (root.phase === "error" && root.translation === "") return Translate.escapeHtmlTags(root.errorText)
             if (root.phase === "empty") return ""
             if (root.phase === "recognizing") return ""
-            return root.phase === "translating" ? root.translation + "▌" : root.translation
+            var body = root.phase === "translating" ? root.translation + "▌" : root.translation
+            return Translate.escapeHtmlTags(body)
           }
           color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground
           wrapMode: Text.Wrap
@@ -332,6 +346,9 @@ Item {
         id: errorCaption
         width: parent.width
         visible: root.phase === "error" && root.translation !== ""
+        // PlainText: the failure reason can embed a provider's raw (possibly
+        // HTML) error body, which must be shown, not parsed.
+        textFormat: Text.PlainText
         text: root.errorText
         color: Color.urgent
         elide: Text.ElideRight

@@ -47,6 +47,13 @@ class MarkdownConverter(HTMLParser):
         text = "".join(self.out)
         if text == "" or text.endswith("\n\n"):
             return
+        # A list item marker with no content yet (`- ` / `1. `, possibly
+        # indented) is already at a block start: without this, a loose
+        # `<li><p>…</p></li>` list degrades into a detached `-` followed by a
+        # blank line and the item text, breaking the list the model is asked
+        # to preserve. `\Z` (not `$`) so a trailing newline does not count.
+        if re.search(r"(^|\n)(?:  )*(- |\d+\. )\Z", text):
+            return
         # Remove trailing spaces on the last line, then ensure blank line
         text = text.rstrip(" \t")
         if text.endswith("\n"):

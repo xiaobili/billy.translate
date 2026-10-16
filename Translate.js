@@ -118,6 +118,94 @@ function parseSseLine(line) {
   return { done: false, content: typeof delta.content === "string" ? delta.content : "" }
 }
 
+// Qt's Text.MarkdownText parses inline HTML the CommonMark way, so a `<...>`
+// that survives translation — a generic like List<String>, a placeholder like
+// <name>, a literal tag the model was told to keep — is swallowed as a tag
+// instead of displayed. Escape the `<` of anything tag-shaped to `&lt;`, which
+// the Markdown renderer shows literally.
+//
+// Fenced code blocks and inline code spans are skipped: their contents are
+// already literal, and escaping there would print the entity text itself.
+// Indented code blocks are not recognised — the model is instructed to emit
+// fences, so a 4-space indent in a translation is prose, not code.
+function escapeHtmlTags(text) {
+  var s = String(text === undefined || text === null ? "" : text)
+  var lines = s.split("\n")
+  var out = []
+  var fenceChar = ""
+  var fenceLen = 0
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    var fence = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (fence) {
+      var mark = fence[1]
+      var ch = mark.charAt(0)
+      var rest = line.substring(fence[0].length)
+      if (fenceChar === "") {
+        fenceChar = ch
+        fenceLen = mark.length
+      } else if (ch === fenceChar && mark.length >= fenceLen && rest.trim() === "") {
+        fenceChar = ""
+        fenceLen = 0
+      }
+      out.push(line)
+      continue
+    }
+    out.push(fenceChar === "" ? escapeCodeSpans(line) : line)
+  }
+  return out.join("\n")
+}
+
+// Escape tag-shaped `<...>` outside inline code spans. A span opens with a
+// run of N backticks and closes with a run of the same length; an unmatched
+// run is literal text, not code.
+function escapeCodeSpans(line) {
+  var out = ""
+  var i = 0
+  var n = line.length
+  while (i < n) {
+    if (line.charAt(i) !== "`") {
+      var start = i
+      while (i < n && line.charAt(i) !== "`") i++
+      out += escapeTagOpen(line.substring(start, i))
+      continue
+    }
+    var runStart = i
+    while (i < n && line.charAt(i) === "`") i++
+    var runLen = i - runStart
+    var close = -1
+    var j = i
+    while (j < n) {
+      if (line.charAt(j) === "`") {
+        var k = j
+        while (k < n && line.charAt(k) === "`") k++
+        if (k - j === runLen) { close = j; break }
+        j = k
+      } else {
+        j++
+      }
+    }
+    if (close === -1) {
+      // No matching run: the backticks are literal text.
+      out += escapeTagOpen(line.substring(runStart))
+      break
+    }
+    // Delimiters and contents are literal; escape nothing inside.
+    out += line.substring(runStart, close + runLen)
+    i = close + runLen
+  }
+  return out
+}
+
+// The `<` of anything shaped like an HTML tag becomes `&lt;`, which the
+// Markdown renderer shows literally instead of parsing as a tag. The lookahead
+// keeps lone `<` (a < b, 1 < 2) untouched — those already render literally —
+// and `>` is never escaped: mid-text it is literal, and at a line start it may
+// be a blockquote the model meant.
+function escapeTagOpen(segment) {
+  return segment.replace(/<(?=[A-Za-z/?!][^<>\n]*>)/g, "&lt;")
+}
+
 // A human sentence for a failed request. `raw` is whatever body arrived.
 function errorText(status, raw) {
   var body = String(raw || "").trim()

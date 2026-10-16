@@ -123,7 +123,10 @@ a 0600 config file, because `/proc/<pid>/cmdline` is world-readable.
 
 The translation bubble renders Markdown (`Text.MarkdownText`): headings, lists,
 bold/italic, links, inline code and code blocks from the translation appear
-formatted, while plain text without Markdown syntax renders unchanged. The
+formatted, while plain text without Markdown syntax renders unchanged. Angle-bracket
+sequences shaped like HTML tags (`List<String>`, `<name>`) are escaped before
+rendering so they display literally instead of being parsed as tags; fenced code
+blocks and inline code spans are already literal and are left alone. The
 built-in system prompt asks the model to preserve Markdown structure —
 translating only the human-readable text inside it — so a structured source
 stays structured in the target language. Copy still copies the Markdown source,
