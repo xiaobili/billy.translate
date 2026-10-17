@@ -48,9 +48,15 @@ function completionsUrl(baseUrl) {
 // The request body for one translation. The text is the only user turn —
 // there is no history, which is what stops a word like "bank" from being
 // answered as though it were a follow-up to something.
-function buildBody(config, text) {
+//
+// systemSuffix (optional) is appended to the system prompt: the verbatim-echo
+// retry uses it to nudge a lazy model without rebuilding the prompt.
+function buildBody(config, text, systemSuffix) {
   var system = String((config && config.systemPrompt) || "").trim()
   if (system === "") system = DEFAULT_SYSTEM_PROMPT
+  if (systemSuffix !== undefined && systemSuffix !== null && String(systemSuffix) !== "") {
+    system = system + "\n\n" + String(systemSuffix)
+  }
 
   var body = {
     model: String((config && config.model) || ""),
@@ -105,6 +111,28 @@ function cacheKey(tag, config, text) {
   }
   return h.toString(16)
 }
+
+// Detects a model echo: the "translation" is the input verbatim. URLs are
+// excluded — keeping them unchanged is by design. Everything else identical
+// counts: a false positive (a proper noun correctly left alone) costs one
+// retry that confirms it, while a false negative is the bug this exists for.
+// Whitespace is ignored: a model that merely re-wraps the input still echoed.
+function isVerbatimEcho(input, output) {
+  var a = String(input === undefined || input === null ? "" : input).replace(/\s+/g, "")
+  var b = String(output === undefined || output === null ? "" : output).replace(/\s+/g, "")
+  if (a === "" || b === "" || a !== b) return false
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(String(input).trim())) return false
+  return true
+}
+
+// Appended to the system prompt for the echo retry: the model already proved
+// it will repeat the input unless told not to.
+var ECHO_NUDGE = [
+  "Your previous response repeated the user's input verbatim instead of",
+  "translating it. Translate the text into the target language (English if",
+  "the input is predominantly Chinese, otherwise Simplified Chinese).",
+  "Output only the translation."
+].join(" ")
 
 // The wrapper curl writes last, so it survives even when the body is an error
 // document rather than a stream.

@@ -37,6 +37,11 @@ check("a blank configured prompt falls back to the default",
   T.buildBody({ model: "m", systemPrompt: "   " }, "x").messages[0].content, T.defaultSystemPrompt())
 check("empty text still produces a user turn",
   T.buildBody({ model: "m" }, "").messages[1].content, "")
+check("a system suffix is appended to the prompt",
+  T.buildBody({ model: "m" }, "x", "nudge").messages[0].content,
+  T.defaultSystemPrompt() + "\n\nnudge")
+check("no suffix leaves the prompt alone",
+  T.buildBody({ model: "m" }, "x").messages[0].content, T.defaultSystemPrompt())
 
 const prompt = T.defaultSystemPrompt()
 check("the default prompt forbids commentary", /only the translation/i.test(prompt), true)
@@ -157,6 +162,26 @@ check("text after a closed fence is escaped again",
   T.escapeHtmlTags("```\n<x>\n```\n<y>"), "```\n<x>\n```\n&lt;y>")
 check("null and undefined are empty",
   T.escapeHtmlTags(null) + T.escapeHtmlTags(undefined), "")
+
+// ------------------------------------------------------ verbatim echo
+// A model that returns the input unchanged gets one retry with a nudge.
+// Short inputs (proper nouns, single words) and URLs are often correctly
+// returned verbatim, so only longer inputs count.
+
+check("an identical sentence is an echo",
+  T.isVerbatimEcho("hello world, this is a test", "hello world, this is a test"), true)
+check("a real translation is not an echo",
+  T.isVerbatimEcho("hello world", "你好世界"), false)
+check("whitespace differences still count as an echo",
+  T.isVerbatimEcho("hello  world\ftest", "hello world test"), true)
+check("a proper noun is flagged too — the retry confirms it",
+  T.isVerbatimEcho("Billy", "Billy"), true)
+check("an identical URL is not an echo",
+  T.isVerbatimEcho("https://example.com/some/path", "https://example.com/some/path"), false)
+check("empty inputs are not echoes",
+  T.isVerbatimEcho("", "") === false && T.isVerbatimEcho("hello world test", "") === false, true)
+check("the nudge names the failure",
+  /verbatim/.test(T.ECHO_NUDGE) && /only the translation/i.test(T.ECHO_NUDGE), true)
 
 // ------------------------------------------------- incremental escaping
 // escapeHtmlLines carries fence state across calls so the bubble can escape

@@ -361,8 +361,11 @@ PanelWindow {
     onCloseRequested: root.close()
     onInputChanged: root.handleInputChanged()
     onSubmitRequested: root.submitInput()
-    // P0.2: the request was capped — say so under the result.
-    noticeText: transport.truncated ? "Input truncated to " + transport.maxChars + " characters." : ""
+    // P0.2: the request was capped — say so under the result. A verbatim echo
+    // that survived its retry is reported too, so it never reads as a
+    // successful translation.
+    noticeText: transport.truncated ? "Input truncated to " + transport.maxChars + " characters."
+      : transport.echoed ? "The model returned the input unchanged." : ""
   }
 
   IpcHandler {

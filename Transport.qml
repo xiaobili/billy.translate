@@ -57,20 +57,27 @@ QtObject {
   property string cacheTag: ""
   property var cache: []
 
+  // Verbatim-echo handling: a model that returns the input unchanged gets one
+  // retry with an explicit nudge (promptSuffix). echoRetried guards the retry;
+  // echoed reports the final verdict to the bubble when the retry echoed too.
+  property bool echoRetried: false
+  property bool echoed: false
+  property string promptSuffix: ""
+
   function cacheFind(key) {
     for (var i = 0; i < root.cache.length; i++) {
       if (root.cache[i].key === key) {
         var entry = root.cache[i]
         root.cache.splice(i, 1)
         root.cache.unshift(entry)
-        return entry.output
+        return entry
       }
     }
     return null
   }
 
-  function cacheStore(key, output) {
-    root.cache.unshift({ key: key, output: output })
+  function cacheStore(key, output, echoed) {
+    root.cache.unshift({ key: key, output: output, echoed: echoed === true })
     while (root.cache.length > 8) root.cache.pop()
   }
 
@@ -158,6 +165,9 @@ QtObject {
 
     root.retryTimer.stop()
     root.retryCount = 0
+    root.echoRetried = false
+    root.echoed = false
+    root.promptSuffix = ""
 
     var text = String(root.text || "")
     root.truncated = text.length > root.maxChars
@@ -166,7 +176,8 @@ QtObject {
     var key = Translate.cacheKey(root.cacheTag, root.config, root.sendText)
     var hit = root.cacheFind(key)
     if (hit !== null) {
-      root.output = hit
+      root.output = hit.output
+      root.echoed = hit.echoed
       root.pendingText = ""
       root.errorText = ""
       root.httpStatus = 200
@@ -197,7 +208,7 @@ QtObject {
     // it reads exist.
     try {
       root.confFile.setText(root.curlConfigText())
-      root.bodyFile.setText(JSON.stringify(Translate.buildBody(root.config, root.sendText)) + "\n")
+      root.bodyFile.setText(JSON.stringify(Translate.buildBody(root.config, root.sendText, root.promptSuffix)) + "\n")
     } catch (e) {
       root.fail("Could not prepare the request: " + e)
       return
@@ -331,12 +342,28 @@ QtObject {
       return
     }
 
-    root.state = "idle"
     root.stopReason = ""
+    // A verbatim echo is a lazy model response, not a transport failure:
+    // retry once with an explicit nudge before reporting anything. This check
+    // runs while the state is still "streaming", so the bubble keeps its
+    // translating phase and the paint timer keeps running.
+    if (outcome === "done" && root.errorText === "" && root.output !== "" &&
+        !root.echoRetried && Translate.isVerbatimEcho(root.sendText, root.output)) {
+      root.echoRetried = true
+      root.promptSuffix = Translate.ECHO_NUDGE
+      root.launch()
+      return
+    }
+
+    root.state = "idle"
     // Only a clean, complete answer is cached: a partial answer with an error
-    // caption, or a canceled one, must not be served as the whole truth.
+    // caption, or a canceled one, must not be served as the whole truth. An
+    // echo that survived its retry is cached too — it is the model's stable
+    // answer — but flagged so the bubble says so.
     if (outcome === "done" && root.errorText === "" && root.output !== "") {
-      root.cacheStore(Translate.cacheKey(root.cacheTag, root.config, root.sendText), root.output)
+      var echoed = Translate.isVerbatimEcho(root.sendText, root.output)
+      root.echoed = echoed
+      root.cacheStore(Translate.cacheKey(root.cacheTag, root.config, root.sendText), root.output, echoed)
     }
     root.finished(outcome)
   }

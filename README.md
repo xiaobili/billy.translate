@@ -120,6 +120,13 @@ bad URL, timeout, dismissal) fails fast as before. A repeated translation of
 the same text through the same model and prompt is answered from an in-memory
 cache (8 entries) instead of another API call.
 
+If a completed stream comes back identical to the input — a lazy model
+response, most often when the input is already near the target language — it
+is retried once with an explicit "translate, do not repeat" nudge. If the
+retry repeats it too, the answer stands but the bubble says so ("The model
+returned the input unchanged.") instead of reading as a successful
+translation. URLs are exempt: keeping them unchanged is by design.
+
 The tuning knobs (`preCopyDelayMs`, `pollAttempts`, `pollIntervalMs`) can also
 be set per-invocation via the `PRE_COPY_DELAY_MS`, `POLL_ATTEMPTS` and
 `POLL_INTERVAL_MS` environment variables, which win over the config file.

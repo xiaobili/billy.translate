@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- A stream that comes back identical to the input (a lazy model echo) is
+  retried once with an explicit "translate, do not repeat" nudge. If the retry
+  repeats it too, the bubble reports "The model returned the input unchanged."
+  instead of presenting it as a translation. URLs are exempt.
+
 ## 0.2.0
 
 Transport (requests):
