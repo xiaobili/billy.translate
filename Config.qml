@@ -37,7 +37,14 @@ QtObject {
       maxTokens: 0,
       timeoutSec: 60,
       ocrEngine: "tesseract",
-      ocrLanguages: "chi_sim+eng"
+      ocrLanguages: "chi_sim+eng",
+      // P0.2: requests longer than this are truncated before sending.
+      maxChars: 8000,
+      // P0.5: pick-text timing knobs, previously environment-only.
+      // Precedence: explicit environment > config file > these defaults.
+      preCopyDelayMs: 350,
+      pollAttempts: 16,
+      pollIntervalMs: 25
     }
   }
 
@@ -90,6 +97,30 @@ QtObject {
       return
     }
     root.file.setText(JSON.stringify(root.config, null, 2) + "\n")
+  }
+
+  // P0.4: the input-mode draft, so a shell restart no longer clears it. A
+  // plain text file next to config.json: 0600 via atomicWrites, same as the
+  // config itself. Overlay.qml debounces writes and restores on input-open.
+  readonly property string draftPath: root.dir + "/draft.txt"
+
+  function loadDraft() {
+    if (!root.dirsReady) return ""
+    return String(root.draftFile.text() || "")
+  }
+
+  function saveDraft(text) {
+    if (!root.dirsReady) return
+    root.draftFile.setText(String(text === undefined || text === null ? "" : text))
+  }
+
+  property FileView draftFile: FileView {
+    path: root.dirsReady ? root.draftPath : ""
+    printErrors: false
+    atomicWrites: true
+    blockWrites: true
+    blockLoading: true
+    onSaveFailed: root.lastError = "Cannot write " + root.draftPath
   }
 
   // Writes must be complete before the caller proceeds, and setText() is

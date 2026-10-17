@@ -88,6 +88,36 @@ check("English text labels to Chinese", T.directionLabel("hello world"), "→ �
 check("CJK among Latin text is enough", T.directionLabel("hello 你好"), "中文 → EN")
 check("one CJK character alone is enough", T.directionLabel("好"), "中文 → EN")
 
+// ------------------------------------------------------------ truncation
+// A whole-page rich capture must not go out unbounded: it burns tokens and
+// risks the provider's context limit.
+
+check("short text passes through",
+  T.truncateText("hello", 8000), "hello")
+check("long text is cut to the limit",
+  T.truncateText("abcdefgh", 5), "abcde")
+check("a non-positive limit disables the cap",
+  T.truncateText("abcdefgh", 0), "abcdefgh")
+check("a surrogate pair is never split at the cut",
+  T.truncateText("ab\uD83D\uDE00cd", 3), "ab")
+check("null and undefined are empty",
+  T.truncateText(null, 10) + T.truncateText(undefined, 10), "")
+
+// ------------------------------------------------------------------- cache
+// The same text through the same model and prompt is the same request.
+
+var cfgA = { model: "m", systemPrompt: "" }
+check("the key is stable",
+  T.cacheKey("selection", cfgA, "hi") === T.cacheKey("selection", cfgA, "hi"), true)
+check("the text matters",
+  T.cacheKey("selection", cfgA, "hi") === T.cacheKey("selection", cfgA, "yo"), false)
+check("the model matters",
+  T.cacheKey("selection", cfgA, "hi") === T.cacheKey("selection", { model: "n", systemPrompt: "" }, "hi"), false)
+check("the prompt matters",
+  T.cacheKey("selection", cfgA, "hi") === T.cacheKey("selection", { model: "m", systemPrompt: "x" }, "hi"), false)
+check("the capture tag matters",
+  T.cacheKey("selection", cfgA, "hi") === T.cacheKey("input", cfgA, "hi"), false)
+
 // ------------------------------------------------------ html-tag escaping
 // A tag-shaped `<...>` must render literally instead of being parsed as
 // inline HTML by Text.MarkdownText; lone `<` and `>` already render
@@ -127,5 +157,33 @@ check("text after a closed fence is escaped again",
   T.escapeHtmlTags("```\n<x>\n```\n<y>"), "```\n<x>\n```\n&lt;y>")
 check("null and undefined are empty",
   T.escapeHtmlTags(null) + T.escapeHtmlTags(undefined), "")
+
+// ------------------------------------------------- incremental escaping
+// escapeHtmlLines carries fence state across calls so the bubble can escape
+// only the new lines of a growing stream. Chunked escaping must equal the
+// one-shot result.
+
+function escapeIncremental(chunks) {
+  var text = ""
+  var fc = ""
+  var fl = 0
+  for (var i = 0; i < chunks.length; i++) {
+    var res = T.escapeHtmlLines(chunks[i], fc, fl)
+    text += res.text
+    fc = res.fenceChar
+    fl = res.fenceLen
+  }
+  return { text: text, fenceChar: fc, fenceLen: fl }
+}
+
+check("one chunk equals the one-shot result",
+  escapeIncremental(["a <b>\n"]).text, T.escapeHtmlTags("a <b>\n"))
+check("fence state carries across chunks",
+  escapeIncremental(["```\n", "<div>\n", "```\n", "<p>\n"]).text,
+  T.escapeHtmlTags("```\n<div>\n```\n<p>\n"))
+check("an unclosed fence keeps the tail literal across chunks",
+  escapeIncremental(["```\n", "<div>\n"]).text, T.escapeHtmlTags("```\n<div>\n"))
+check("state is reported back to the caller",
+  escapeIncremental(["~~~\n"]).fenceChar, "~")
 
 report()

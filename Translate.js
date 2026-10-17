@@ -76,6 +76,36 @@ function buildBody(config, text) {
   return body
 }
 
+// Cap the request size: a whole-page rich capture can be tens of thousands
+// of characters, which burns tokens and risks the provider's context limit.
+// Never splits a surrogate pair at the cut — a dangling lead surrogate would
+// serialise as U+FFFD and confuse the model's tokeniser.
+function truncateText(text, maxChars) {
+  var s = String(text === undefined || text === null ? "" : text)
+  var max = Math.floor(Number(maxChars))
+  if (!(max > 0) || s.length <= max) return s
+  var cut = s.substring(0, max)
+  var last = cut.charCodeAt(cut.length - 1)
+  if (last >= 0xD800 && last <= 0xDBFF) cut = cut.substring(0, cut.length - 1)
+  return cut
+}
+
+// Stable key for the in-memory request cache: the same text through the same
+// model and prompt is the same request, whatever mode captured it — hence the
+// caller-supplied tag (selection/input/ocr, plus the rich marker). djb2 over
+// the parts: collisions across a handful of entries are a non-issue, and the
+// 32-bit shifts keep it exact without Math.imul.
+function cacheKey(tag, config, text) {
+  var system = String((config && config.systemPrompt) || "").trim()
+  var s = String(tag || "") + "\n" + String((config && config.model) || "") + "\n" +
+      system + "\n" + String(text === undefined || text === null ? "" : text)
+  var h = 5381
+  for (var i = 0; i < s.length; i++) {
+    h = (((h << 5) + h) + s.charCodeAt(i)) >>> 0
+  }
+  return h.toString(16)
+}
+
 // The wrapper curl writes last, so it survives even when the body is an error
 // document rather than a stream.
 function httpMarker() {
@@ -128,12 +158,17 @@ function parseSseLine(line) {
 // already literal, and escaping there would print the entity text itself.
 // Indented code blocks are not recognised — the model is instructed to emit
 // fences, so a 4-space indent in a translation is prose, not code.
-function escapeHtmlTags(text) {
-  var s = String(text === undefined || text === null ? "" : text)
-  var lines = s.split("\n")
+// Escape one chunk of complete lines, carrying fence state across calls so a
+// caller can escape a growing stream incrementally: only the new lines go
+// through here, and the trailing partial line (no "\n" yet) is escaped
+// separately without committing fence state — a fence opener split across two
+// flushes must not flip the state early. Returns
+// {text, fenceChar, fenceLen}.
+function escapeHtmlLines(chunk, fenceChar, fenceLen) {
+  var lines = String(chunk === undefined || chunk === null ? "" : chunk).split("\n")
   var out = []
-  var fenceChar = ""
-  var fenceLen = 0
+  var fc = fenceChar || ""
+  var fl = fenceLen || 0
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i]
     var fence = line.match(/^ {0,3}(`{3,}|~{3,})/)
@@ -141,19 +176,23 @@ function escapeHtmlTags(text) {
       var mark = fence[1]
       var ch = mark.charAt(0)
       var rest = line.substring(fence[0].length)
-      if (fenceChar === "") {
-        fenceChar = ch
-        fenceLen = mark.length
-      } else if (ch === fenceChar && mark.length >= fenceLen && rest.trim() === "") {
-        fenceChar = ""
-        fenceLen = 0
+      if (fc === "") {
+        fc = ch
+        fl = mark.length
+      } else if (ch === fc && mark.length >= fl && rest.trim() === "") {
+        fc = ""
+        fl = 0
       }
       out.push(line)
       continue
     }
-    out.push(fenceChar === "" ? escapeCodeSpans(line) : line)
+    out.push(fc === "" ? escapeCodeSpans(line) : line)
   }
-  return out.join("\n")
+  return { text: out.join("\n"), fenceChar: fc, fenceLen: fl }
+}
+
+function escapeHtmlTags(text) {
+  return escapeHtmlLines(text, "", 0).text
 }
 
 // Escape tag-shaped `<...>` outside inline code spans. A span opens with a

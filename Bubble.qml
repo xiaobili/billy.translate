@@ -28,6 +28,8 @@ Item {
   // mode === "selection" but renders as plain text.
   property bool richPick: false
   property string inputText: ""
+  // P0.2: shown under the result when the request was truncated.
+  property string noticeText: ""
   // The input area's own cap, and what Task 3's budget reads. `inputArea` is
   // the TextArea further down this same file.
   readonly property int inputInset: Style.space(6)
@@ -59,7 +61,19 @@ Item {
   // the scrim. `maxResultHeight` is a ceiling in BOTH modes: without the
   // Math.min the no-caption column lands exactly on bodyBudget with zero
   // headroom, which is how the overflow went unnoticed.
-  readonly property int captionHeight: errorCaption.visible ? errorCaption.implicitHeight + body.spacing : 0
+  readonly property int captionHeight: (errorCaption.visible ? errorCaption.implicitHeight + body.spacing : 0)
+      + (noticeCaption.visible ? noticeCaption.implicitHeight + body.spacing : 0)
+  // P1.6: selection mode gets the same budget treatment input mode already
+  // has. The source preview (up to 3 lines) and its separator are charged like
+  // the input area is, so the card no longer leans on BorderSurface clipping
+  // once [spacing] scale drops — the clipped last line from the README's
+  // known limitations. Gap counts mirror the visible children:
+  // header→source→separator→result is three gaps, header→result (no source)
+  // is one.
+  readonly property int sourceBlockHeight: sourcePreview.visible ? sourcePreview.implicitHeight + body.spacing : 0
+  readonly property int selectionGaps: sourcePreview.visible ? 3 * body.spacing : body.spacing
+  readonly property int selectionResultCap: Math.min(root.maxResultHeight, Math.max(0,
+      root.bodyBudget - root.headerHeight - root.sourceBlockHeight - root.selectionGaps - root.captionHeight))
   // Markdown rendering is opt-in per mode. The input field is user-authored
   // (deliberate Markdown is welcome) and rich mode explicitly captures
   // formatting; plain selection and OCR text is arbitrary — its `*`, `#`,
@@ -69,7 +83,58 @@ Item {
   readonly property int resultCap: root.mode === "input"
     ? Math.min(root.maxResultHeight, Math.max(0,
         root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing - root.captionHeight))
-    : root.maxResultHeight
+    : root.selectionResultCap
+
+  // P1.9: incremental Markdown escaping. escapeHtmlTags() over the whole
+  // translation on every 100ms flush is O(stream time × text length); the
+  // transport only appends to `translation` (or resets it), so only complete
+  // new lines since the last pass go through the escaper. The trailing
+  // partial line is short and is re-escaped fresh each time without committing
+  // fence state — a fence opener that has not seen its newline yet must not
+  // flip the state early. A shrink (a new request resetting the text) resets
+  // the whole state.
+  property string _escapedTranslation: ""
+  property string _escCache: ""
+  property int _escEnd: 0
+  property string _escFenceChar: ""
+  property int _escFenceLen: 0
+
+  function escapeStreaming(raw) {
+    var r = String(raw === undefined || raw === null ? "" : raw)
+    if (!root.renderMarkdown) {
+      root._escCache = ""
+      root._escEnd = 0
+      root._escFenceChar = ""
+      root._escFenceLen = 0
+      return r
+    }
+    if (r.length < root._escEnd) {
+      root._escCache = ""
+      root._escEnd = 0
+      root._escFenceChar = ""
+      root._escFenceLen = 0
+    }
+    var end = r.lastIndexOf("\n") + 1
+    if (end > root._escEnd) {
+      var res = Translate.escapeHtmlLines(r.substring(root._escEnd, end), root._escFenceChar, root._escFenceLen)
+      root._escCache = root._escCache + res.text
+      root._escFenceChar = res.fenceChar
+      root._escFenceLen = res.fenceLen
+      root._escEnd = end
+    }
+    var tail = Translate.escapeHtmlLines(r.substring(root._escEnd), root._escFenceChar, root._escFenceLen).text
+    return root._escCache + tail
+  }
+
+  // Kept outside the `text:` binding on purpose: escapeStreaming() mutates the
+  // incremental state it also reads, and doing that inside a binding would
+  // re-trigger the binding on every write.
+  onTranslationChanged: root._escapedTranslation = root.escapeStreaming(root.translation)
+
+  function restoreDraft(text) {
+    if (root.mode !== "input") return
+    inputArea.text = String(text || "")
+  }
 
   function selectAllInput() {
     if (root.mode !== "input") return
@@ -234,6 +299,7 @@ Item {
       // Shown so the fallback path is falsifiable: when the synthetic Ctrl+C
       // grabs the wrong thing, this is how you see it.
       Text {
+        id: sourcePreview
         width: parent.width
         visible: root.mode !== "input" && root.sourceText !== ""
         // PlainText: the preview shows the captured selection verbatim, and
@@ -330,12 +396,13 @@ Item {
           // `&lt;` would show up verbatim.
           textFormat: root.renderMarkdown ? Text.MarkdownText : Text.PlainText
           text: {
-            var raw
-            if (root.phase === "error" && root.translation === "") raw = root.errorText
-            else if (root.phase === "empty" || root.phase === "recognizing") raw = ""
-            else if (root.phase === "translating") raw = root.translation + "▌"
-            else raw = root.translation
-            return root.renderMarkdown ? Translate.escapeHtmlTags(raw) : raw
+            var bodyText
+            if (root.phase === "error" && root.translation === "")
+              bodyText = root.renderMarkdown ? Translate.escapeHtmlTags(root.errorText) : root.errorText
+            else if (root.phase === "empty" || root.phase === "recognizing") bodyText = ""
+            else if (root.phase === "translating") bodyText = root._escapedTranslation + "▌"
+            else bodyText = root._escapedTranslation
+            return bodyText
           }
           color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground
           wrapMode: Text.Wrap
@@ -369,6 +436,22 @@ Item {
         color: Color.urgent
         elide: Text.ElideRight
         maximumLineCount: 3
+        wrapMode: Text.Wrap
+        font.family: Style.font.resolvedFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      // P0.2: the request was truncated to maxChars — the answer covers only
+      // the head of the input, and the bubble says so.
+      Text {
+        id: noticeCaption
+        width: parent.width
+        visible: root.noticeText !== ""
+        textFormat: Text.PlainText
+        text: root.noticeText
+        color: Color.muted
+        elide: Text.ElideRight
+        maximumLineCount: 2
         wrapMode: Text.Wrap
         font.family: Style.font.resolvedFamily
         font.pixelSize: Style.font.caption

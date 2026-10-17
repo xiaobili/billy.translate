@@ -74,8 +74,8 @@ last queried — wherever the pointer was for the last `ALT + D`, or centred on
 the screen the first time. Querying it here would only make the card jump out
 from under you once it was already visible.
 
-The draft lives in memory: it survives closing the bubble and comes back
-selected next time, but a shell restart clears it.
+The draft lives in `~/.local/state/omarchy/translate/draft.txt`: it survives
+closing the bubble and shell restarts, and comes back selected next time.
 
 ## Screenshot OCR
 
@@ -87,7 +87,10 @@ The OCR engine is selected in `~/.local/state/omarchy/translate/config.json`:
 EasyOCR virtual environment. The default Tesseract engine needs no extra setup;
 run `./tools/install-easyocr.sh` only if you choose EasyOCR. Both choices use
 Omarchy's region selector, enlarge the captured image 2x in memory, and leave
-the clipboard unchanged. EasyOCR runs in CPU mode and downloads model weights
+the clipboard unchanged. The 2x enlargement uses ImageMagick when available and
+falls back to a Pillow one-liner (`python3 -c 'import PIL.Image'`); with neither,
+the raw capture goes through and the skip is logged to
+`/tmp/billy-translate-ocr.log`. EasyOCR runs in CPU mode and downloads model weights
 on first use to `~/.EasyOCR/model` if they are not cached.
 
 ## Configuration
@@ -104,8 +107,25 @@ run from the chat plugin's config:
 | `temperature`  | `0.2` by default — translation wants determinism               |
 | `maxTokens`    | `0` means "do not send the field"                              |
 | `timeoutSec`   | Request timeout, `60` by default                               |
+| `maxChars`     | Inputs longer than this are truncated before sending (`8000`)  |
 | `ocrEngine`    | `tesseract` (default) or `easyocr`                             |
 | `ocrLanguages` | `chi_sim+eng` by default; language codes separated by `+`      |
+| `preCopyDelayMs` | Wait before the synthetic Ctrl+C, so the hotkey's modifiers are released (`350`) |
+| `pollAttempts` | How many 25ms polls wait for the synthetic copy to land (`16`) |
+| `pollIntervalMs` | Interval between those polls in ms (`25`)                   |
+
+A failed request with a 429 or 5xx status is retried automatically — twice,
+after 1s and 2s — since those are usually transient. Anything else (auth,
+bad URL, timeout, dismissal) fails fast as before. A repeated translation of
+the same text through the same model and prompt is answered from an in-memory
+cache (8 entries) instead of another API call.
+
+The tuning knobs (`preCopyDelayMs`, `pollAttempts`, `pollIntervalMs`) can also
+be set per-invocation via the `PRE_COPY_DELAY_MS`, `POLL_ATTEMPTS` and
+`POLL_INTERVAL_MS` environment variables, which win over the config file.
+
+Inputs longer than `maxChars` are truncated before sending (never splitting a
+surrogate pair), and the bubble says so under the result.
 
 The request disables the provider's thinking mode (`thinking: {type: "disabled"}`).
 This tool only translates, and on DeepSeek thinking mode also ignores
@@ -179,10 +199,6 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 3. Some apps do not populate the primary selection at all, so they always take
    the fallback path.
 4. There is no settings UI. Edit the JSON.
-5. The draft in the input field is in memory only — a shell restart clears it.
-6. Input mode's card is height-budgeted; selection mode's is not. It fits at the
-   default `[spacing] scale` with a few pixels to spare, but below roughly 0.94
-   the card clips its last line instead of painting it over the scrim.
 
 ## Tests
 

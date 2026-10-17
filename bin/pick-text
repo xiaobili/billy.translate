@@ -21,8 +21,42 @@ set -uo pipefail
 # How long to wait for the synthetic Ctrl+C to land. Long enough for a slow
 # app to service the key, short enough that a keypress that goes nowhere does
 # not feel like a hang.
-POLL_INTERVAL_MS=25
-POLL_ATTEMPTS=16
+#
+# Tuning knobs live in the plugin's config.json so they survive without
+# environment plumbing (the QML side never spawns this with a custom
+# environment). Precedence: explicit environment > config file > built-in
+# default. The config file is only consulted when jq is available; without it
+# the environment/defaults still work.
+pick_config_path="${PICK_CONFIG_PATH:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/translate/config.json}"
+
+pick_config_value() {
+  local key="$1"
+  if [ -r "$pick_config_path" ] && command -v jq >/dev/null 2>&1; then
+    jq -r --arg key "$key" '.[$key] | select(type == "number") | tostring' \
+      "$pick_config_path" 2>/dev/null || true
+  fi
+}
+
+# pick_num <env-name> <config-key> <min> <max> <default>: integer knob with
+# clamping; non-numeric input falls back to the default rather than failing.
+pick_num() {
+  local name="$1" key="$2" min="$3" max="$4" def="$5"
+  local v=""
+  eval "v=\${$name:-}"
+  if [ -z "$v" ]; then
+    v="$(pick_config_value "$key")"
+    [ -z "$v" ] && v="$def"
+  fi
+  case "$v" in
+    ''|*[!0-9]*) v="$def" ;;
+  esac
+  [ "$v" -lt "$min" ] && v="$min"
+  [ "$v" -gt "$max" ] && v="$max"
+  printf '%s' "$v"
+}
+
+POLL_INTERVAL_MS="$(pick_num POLL_INTERVAL_MS pollIntervalMs 5 1000 25)"
+POLL_ATTEMPTS="$(pick_num POLL_ATTEMPTS pollAttempts 1 200 16)"
 
 # Delay before synthesising Ctrl+C, so the user can release the hotkey's own
 # modifiers first. A physically-held Alt/Shift merges with the virtual Ctrl+C
@@ -30,7 +64,7 @@ POLL_ATTEMPTS=16
 # device is NOT fully independent of the physical modifier state. Only the
 # synthetic-copy path pays this; the primary-selection fast path never touches
 # the keyboard.
-PRE_COPY_DELAY_MS="${PRE_COPY_DELAY_MS:-350}"
+PRE_COPY_DELAY_MS="$(pick_num PRE_COPY_DELAY_MS preCopyDelayMs 0 5000 350)"
 
 # Overridable so a test can drive the restore path with stubs. The replay
 # cannot be exercised against the real clipboard: it needs a rich-text or image
@@ -51,6 +85,26 @@ dbg() {
 }
 
 # ------------------------------------------------- rich-text reading
+# The offered types are listed once and the preference order is applied to
+# that list, instead of probing each type with its own wl-paste invocation.
+# On the ALT+D hot path that is two fewer process spawns per call.
+#
+# list_types <wl-paste args...>: prints the offered types, one per line. When
+# listing fails, the three interesting types are assumed so callers fall back
+# to probing each one — the old behaviour, not a new failure mode.
+list_types() {
+  local t
+  if t="$("$WL_PASTE" "$@" --list-types 2>/dev/null)" && [ -n "$t" ]; then
+    printf '%s\n' "$t"
+  else
+    printf 'text/markdown\ntext/html\ntext/plain\n'
+  fi
+}
+
+has_type() { # has_type <type-list> <type>
+  printf '%s\n' "$1" | grep -qx "$2"
+}
+
 # read_rich <wl-paste args...>: prints the richest available flavour as
 # Markdown (or plain text when nothing richer exists). Returns non-zero when
 # nothing is available at all.
@@ -60,29 +114,28 @@ dbg() {
 #   2. text/html — convert to Markdown via bin/html-to-markdown
 #   3. text/plain (wl-paste default) — as-is
 read_rich() {
-  local md html text
+  local types out
+  types="$(list_types "$@")"
   # 1. Native markdown, rare but ideal when offered.
-  md="$("$WL_PASTE" "$@" --type text/markdown 2>/dev/null)" && [ -n "$md" ] && {
-    printf '%s' "$md"
-    return 0
-  }
+  if has_type "$types" "text/markdown"; then
+    out="$("$WL_PASTE" "$@" --type text/markdown 2>/dev/null)" && [ -n "$out" ] && {
+      printf '%s' "$out"
+      return 0
+    }
+  fi
   # 2. HTML -> Markdown. The converter is best-effort: if it fails or yields
   # nothing, fall through to plain text rather than emitting an empty result.
-  if [ -x "$HTML_TO_MARKDOWN" ]; then
-    html="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$html" ] && {
-      md="$(printf '%s' "$html" | "$HTML_TO_MARKDOWN" 2>/dev/null)" && [ -n "$md" ] && {
-        printf '%s' "$md"
+  if has_type "$types" "text/html" && [ -x "$HTML_TO_MARKDOWN" ]; then
+    out="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$out" ] && {
+      out="$(printf '%s' "$out" | "$HTML_TO_MARKDOWN" 2>/dev/null)" && [ -n "$out" ] && {
+        printf '%s' "$out"
         return 0
       }
     }
-  else
-    # Converter missing or not executable: still try raw HTML so a caller that
-    # handles HTML itself can use it via --html (see below).
-    :
   fi
   # 3. Plain text.
-  text="$("$WL_PASTE" "$@" --no-newline 2>/dev/null)" && [ -n "$text" ] && {
-    printf '%s' "$text"
+  out="$("$WL_PASTE" "$@" --no-newline 2>/dev/null)" && [ -n "$out" ] && {
+    printf '%s' "$out"
     return 0
   }
   return 1
@@ -114,8 +167,10 @@ done
 read_explicit() {
   # read_explicit <format> <wl-paste args...>
   local fmt="$1"; shift
-  local out
+  local types out
+  types="$(list_types "$@")"
   if [ "$fmt" = "html" ]; then
+    has_type "$types" "text/html" || return 1
     out="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$out" ] && {
       printf '%s' "$out"
       return 0
@@ -123,11 +178,13 @@ read_explicit() {
     return 1
   fi
   # markdown: native first, then HTML converted
-  out="$("$WL_PASTE" "$@" --type text/markdown 2>/dev/null)" && [ -n "$out" ] && {
-    printf '%s' "$out"
-    return 0
-  }
-  if [ -x "$HTML_TO_MARKDOWN" ]; then
+  if has_type "$types" "text/markdown"; then
+    out="$("$WL_PASTE" "$@" --type text/markdown 2>/dev/null)" && [ -n "$out" ] && {
+      printf '%s' "$out"
+      return 0
+    }
+  fi
+  if has_type "$types" "text/html" && [ -x "$HTML_TO_MARKDOWN" ]; then
     out="$("$WL_PASTE" "$@" --type text/html 2>/dev/null)" && [ -n "$out" ] && {
       out="$(printf '%s' "$out" | "$HTML_TO_MARKDOWN" 2>/dev/null)" && [ -n "$out" ] && {
         printf '%s' "$out"

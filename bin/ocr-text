@@ -11,6 +11,14 @@ config_path="${OCR_CONFIG_PATH:-$state_home/omarchy/translate/config.json}"
 stubs="$(mktemp -d)" || exit 1
 worker_pid=""
 
+# Diagnostics go to a file, not stderr: Quickshell's Process does not forward
+# a child's stderr to the journal, so stderr diagnostics are invisible when the
+# script runs from the plugin. (Same pattern as bin/pick-text.)
+export OCR_DEBUG_LOG="${OCR_DEBUG_LOG:-/tmp/billy-translate-ocr.log}"
+dbg() {
+  printf '%s ocr-text: %s\n' "$(date '+%F %T')" "$*" >> "$OCR_DEBUG_LOG" 2>/dev/null || true
+}
+
 config_value() {
   local key="$1"
   local fallback="$2"
@@ -40,31 +48,24 @@ trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 
+# The two engines run as two plain branches. The old shape hid EasyOCR behind
+# a fake `tesseract` on PATH and passed it tesseract flags it never read —
+# real invocations with real arguments now, and failures that name the engine
+# that actually failed.
 case "$ocr_engine" in
   tesseract)
     if [ ! -x "$tesseract_bin" ]; then
       printf 'Tesseract executable not found: %s\n' "$tesseract_bin" >&2
       exit 1
     fi
-    cat > "$stubs/tesseract" <<'STUB'
-#!/usr/bin/env bash
-exec "$OCR_TESSERACT_BIN" "$@"
-STUB
-    chmod +x "$stubs/tesseract"
-    export OCR_TESSERACT_BIN="$tesseract_bin"
+    ocr_runner="tesseract"
     ;;
   easyocr)
     if [ ! -x "$easyocr_python" ]; then
       printf 'EasyOCR Python environment not found: %s\n' "$easyocr_python" >&2
       exit 1
     fi
-    cat > "$stubs/tesseract" <<'STUB'
-#!/usr/bin/env bash
-    exec "$EASYOCR_PYTHON" "$EASYOCR_SCRIPT"
-STUB
-    chmod +x "$stubs/tesseract"
-    export EASYOCR_PYTHON="$easyocr_python"
-    export EASYOCR_SCRIPT="$easyocr_script"
+    ocr_runner="easyocr"
     ;;
   *)
     printf 'Unsupported OCR engine: %s\n' "$ocr_engine" >&2
@@ -72,6 +73,10 @@ STUB
     ;;
 esac
 
+export OCR_RUNNER="$ocr_runner"
+export OCR_TESSERACT_BIN="$tesseract_bin"
+export EASYOCR_PYTHON="$easyocr_python"
+export EASYOCR_SCRIPT="$easyocr_script"
 export OCR_MAGICK_BIN="$magick_bin"
 export OMARCHY_OCR_LANGS="$ocr_languages"
 export OCR_LANGUAGES="$ocr_languages"
@@ -101,6 +106,40 @@ for tool in hyprpicker slurp grim; do
   fi
 done
 
+# 2x upscale in memory. ImageMagick first; without it a Pillow one-liner keeps
+# the enlargement the README promises; without either, the raw capture goes
+# through and the skip is logged instead of being silent.
+upscaled_png() {
+  if [ -n "$OCR_MAGICK_BIN" ]; then
+    "$OCR_MAGICK_BIN" "$1" -filter Lanczos -resize 200% png:-
+    return $?
+  fi
+  if command -v python3 >/dev/null 2>&1 && python3 -c 'import PIL.Image' 2>/dev/null; then
+    python3 - "$1" <<'EOF'
+import sys
+from PIL import Image
+im = Image.open(sys.argv[1]).convert("RGB")
+im = im.resize((im.width * 2, im.height * 2), Image.LANCZOS)
+im.save(sys.stdout.buffer, format="PNG")
+EOF
+    return $?
+  fi
+  printf '%s ocr-text: no upscaler (magick or python3+Pillow) found; OCR runs on the raw capture\n' \
+    "$(date '+%F %T')" >> "${OCR_DEBUG_LOG:-/tmp/billy-translate-ocr.log}" 2>/dev/null || true
+  cat "$1"
+}
+
+run_tesseract() {
+  "$OCR_TESSERACT_BIN" stdin stdout --oem 1 --psm 6 -l "$OCR_LANGUAGES" --dpi 300 \
+    -c preserve_interword_spaces=1 > "$OCR_TEXT_OUTPUT" 2>/dev/null
+}
+
+run_easyocr() {
+  # EasyOCR reads the image bytes from stdin and honours no tesseract flags;
+  # its languages arrive via OMARCHY_OCR_LANGS.
+  "$EASYOCR_PYTHON" "$EASYOCR_SCRIPT" > "$OCR_TEXT_OUTPUT" 2>/dev/null
+}
+
 # Keep the screen frozen until grim has finished capturing the selected area.
 hyprpicker -r -z >/dev/null 2>&1 &
 freeze_pid=$!
@@ -112,19 +151,16 @@ cleanup_freeze
 trap - EXIT
 
 printf 'OCR_SELECTION_READY\n' >&2
-ocr_args=(stdin stdout --oem 1 --psm 6 -l "$OCR_LANGUAGES" --dpi 300 -c preserve_interword_spaces=1)
-if [ -n "$OCR_MAGICK_BIN" ]; then
-  "$OCR_MAGICK_BIN" "$OCR_CAPTURE_IMAGE" -filter Lanczos -resize 200% png:- |
-    tesseract "${ocr_args[@]}" > "$OCR_TEXT_OUTPUT" 2>/dev/null
-else
-  cat "$OCR_CAPTURE_IMAGE" | tesseract "${ocr_args[@]}" > "$OCR_TEXT_OUTPUT" 2>/dev/null
-fi
+case "$OCR_RUNNER" in
+  tesseract) upscaled_png "$OCR_CAPTURE_IMAGE" | run_tesseract ;;
+  easyocr)   upscaled_png "$OCR_CAPTURE_IMAGE" | run_easyocr ;;
+esac
 exit_code=$?
 [ "$exit_code" -eq 0 ] || exit "$exit_code"
 WORKER
 chmod +x "$stubs/ocr-worker"
 
-setsid env PATH="$stubs:$PATH" "$stubs/ocr-worker" &
+setsid "$stubs/ocr-worker" &
 worker_pid=$!
 wait "$worker_pid"
 exit_code=$?

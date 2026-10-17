@@ -131,7 +131,12 @@ PanelWindow {
       // Fetch the current cursor position so the bubble appears near the cursor,
       // not at the stale position left over from the previous selection mode.
       probe.queryCursor()
-      Qt.callLater(function () { bubble.selectAllInput() })
+      // P0.4: the draft survived the restart on disk; put it back selected.
+      var draft = root.config.loadDraft()
+      Qt.callLater(function () {
+        if (draft !== "") bubble.restoreDraft(draft)
+        bubble.selectAllInput()
+      })
       return
     }
     root.mode = payload.mode === "ocr" ? "ocr" : "selection"
@@ -219,6 +224,13 @@ PanelWindow {
       ? "" : Translate.directionLabel(root.inputText)
   }
 
+  // P0.4: every input change refreshes the label and (debounced) persists the
+  // draft, so a shell restart no longer clears it.
+  function handleInputChanged() {
+    root.refreshInputLabel()
+    root.draftTimer.restart()
+  }
+
   function copyTranslation() {
     transport.flushPaint()
     if (transport.output === "") return
@@ -232,6 +244,13 @@ PanelWindow {
   property Timer copiedTimer: Timer {
     interval: 1500
     onTriggered: root.copied = false
+  }
+
+  // P0.4: debounce for draft persistence — one write per pause in typing,
+  // not one per keystroke.
+  property Timer draftTimer: Timer {
+    interval: 600
+    onTriggered: root.config.saveDraft(root.inputText)
   }
 
   property Timer ocrLaunchTimer: Timer {
@@ -279,6 +298,9 @@ PanelWindow {
     // F2: Transport does not derive the state path — Config owns it.
     dir: root.config.dir
     text: root.mode === "input" ? root.inputText : root.selectedText
+    // P0.3: the capture mode is part of the cache key — the same words as
+    // Markdown (rich) and as plain text are different requests.
+    cacheTag: root.mode + (root.richPick ? "-rich" : "")
     // The phase stays "translating" until the stream ends — the bubble shows
     // whatever has arrived, so there is no need to promote a partial answer
     // to "done" and lose the distinction.
@@ -337,8 +359,10 @@ PanelWindow {
     stale: root.mode === "input" && root.inputText !== root.submittedText
     onCopyRequested: root.copyTranslation()
     onCloseRequested: root.close()
-    onInputChanged: root.refreshInputLabel()
+    onInputChanged: root.handleInputChanged()
     onSubmitRequested: root.submitInput()
+    // P0.2: the request was capped — say so under the result.
+    noticeText: transport.truncated ? "Input truncated to " + transport.maxChars + " characters." : ""
   }
 
   IpcHandler {

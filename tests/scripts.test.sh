@@ -294,6 +294,75 @@ check_match "restore still replays when the clipboard holds no text" \
 
 rm -rf "$stub2"
 
+# --------------------------------------- pick-text: flavours and config, stubbed
+
+# Headless: flavour preference on the primary path and the config-file tuning
+# knobs, all driven with stubs. Asserts the list-types-once shape (one
+# --list-types instead of one probe per flavour) and that PICK_CONFIG_PATH is
+# honoured with environment precedence.
+stub3="$(mktemp -d)"
+
+cat > "$stub3/wl-paste" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG"
+a="$*"
+case "$a" in
+  *--primary*)
+    [ "${STUB_PRIMARY:-0}" = "1" ] || exit 1 ;;
+esac
+case "$a" in
+  *--list-types*)
+    printf '%s\n' "$STUB_TYPES"; exit 0 ;;
+  *"--type text/markdown"*)
+    [ -n "${STUB_MD:-}" ] && { printf '%s' "$STUB_MD"; exit 0; }; exit 1 ;;
+  *"--type text/html"*)
+    [ -n "${STUB_HTML:-}" ] && { printf '%s' "$STUB_HTML"; exit 0; }; exit 1 ;;
+  *--no-newline*)
+    printf '%s' "${STUB_TEXT:-}"; [ -n "${STUB_TEXT:-}" ] && exit 0 || exit 1 ;;
+esac
+exit 1
+STUB
+chmod +x "$stub3/wl-paste"
+# A wtype that changes nothing: the clipboard genuinely never changes, so the
+# poll loop runs its full budget.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stub3/wtype-noop"
+chmod +x "$stub3/wtype-noop"
+
+export STUB_DIR="$stub3" STUB_LOG="$stub3/log"
+export WL_PASTE="$stub3/wl-paste" WL_COPY=true WTYPE="$stub3/wtype-noop"
+export PRE_COPY_DELAY_MS=0 POLL_INTERVAL_MS=1 PICK_DEBUG_LOG=/dev/null
+
+TYPES_MDH='text/markdown
+text/html
+text/plain'
+
+export STUB_PRIMARY=1 STUB_TYPES="$TYPES_MDH" STUB_MD='# T' STUB_HTML='<h1>T</h1>' STUB_TEXT='plain'
+: > "$stub3/log"
+check "pick-text prefers markdown on the primary path" "$("$ROOT/bin/pick-text")" "# T"
+check "pick-text lists types once on the primary path" "$(grep -c -- '--list-types' "$stub3/log")" "1"
+
+export STUB_TYPES='text/html
+text/plain' STUB_MD=''
+check "pick-text converts html to markdown" "$("$ROOT/bin/pick-text")" "# T"
+
+# Config knobs: the fallback poll loop is the observable. Primary plain probe
+# + backup read + N poll reads of --no-newline.
+printf '{"pollAttempts":3,"preCopyDelayMs":0,"pollIntervalMs":1}\n' > "$stub3/config.json"
+export STUB_PRIMARY=0 STUB_TYPES='text/plain' STUB_MD='' STUB_HTML='' STUB_TEXT='same' PICK_CONFIG_PATH="$stub3/config.json"
+unset POLL_ATTEMPTS
+: > "$stub3/log"
+"$ROOT/bin/pick-text" >/dev/null 2>&1
+check "pick-text honours pollAttempts from the config file" "$(grep -c -- '--no-newline' "$stub3/log")" "5"
+export POLL_ATTEMPTS=5
+: > "$stub3/log"
+"$ROOT/bin/pick-text" >/dev/null 2>&1
+check "environment wins over the config file" "$(grep -c -- '--no-newline' "$stub3/log")" "7"
+unset POLL_ATTEMPTS PICK_CONFIG_PATH
+
+unset WL_PASTE WL_COPY WTYPE PRE_COPY_DELAY_MS POLL_INTERVAL_MS PICK_DEBUG_LOG
+unset STUB_DIR STUB_LOG STUB_PRIMARY STUB_TYPES STUB_MD STUB_HTML STUB_TEXT
+rm -rf "$stub3"
+
 # Put the caller's selections back — including "nothing was copied", which the
 # sentinel and the cleared primary are not.
 if [ -n "$saved_clip" ]; then
