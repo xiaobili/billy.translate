@@ -356,6 +356,212 @@ function tableRowToItem(cells) {
   return "- " + parts.join(" — ")
 }
 
+// A translation cut into renderable blocks: prose that Text.MarkdownText can
+// draw, and tables that it must not (see flattenTables). One entry per block,
+// in reading order:
+//
+//   { kind: "md", text: "## Files\n\nhttps://…" }
+//   { kind: "table", header: ["File", "Purpose"], rows: [["`SKILL.md`", "…"]] }
+//
+// The header row is split out of `rows` because it is drawn differently; the
+// `| --- |` line is the only thing the parser throws away. Fenced code blocks
+// are never read as tables — a table in a code sample is literal text.
+function splitBlocks(text) {
+  var lines = String(text === undefined || text === null ? "" : text).split("\n")
+  var blocks = []
+  var buf = []
+  var fence = ""
+  var i = 0
+
+  function flush() {
+    if (buf.length === 0) return
+    var text = buf.join("\n").replace(/^\n+/, "").replace(/\n+$/, "")
+    buf = []
+    if (text.trim() !== "") blocks.push({ kind: "md", text: text })
+  }
+
+  while (i < lines.length) {
+    var line = lines[i]
+    var fenceMark = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (fenceMark) {
+      var mark = fenceMark[1]
+      var rest = line.substring(fenceMark[0].length)
+      if (fence === "") fence = mark
+      else if (mark.charAt(0) === fence.charAt(0) && mark.length >= fence.length && rest.trim() === "") fence = ""
+      buf.push(line)
+      i++
+      continue
+    }
+    if (fence === "") {
+      var head = splitTableRow(line)
+      var delim = i + 1 < lines.length ? splitTableRow(lines[i + 1]) : null
+      if (head.length > 0 && delim && delim.length > 0 && isDelimiterRow(delim)) {
+        flush()
+        var rows = []
+        i += 2
+        while (i < lines.length) {
+          var row = splitTableRow(lines[i])
+          if (row.length === 0) break
+          rows.push(row.map(function (cell) { return cell.trim() }))
+          i++
+        }
+        blocks.push({ kind: "table", header: head.map(function (cell) { return cell.trim() }), rows: rows })
+        continue
+      }
+    }
+    buf.push(line)
+    i++
+  }
+  flush()
+  return blocks
+}
+
+// How wide one cell "wants" to be, in em: full-width CJK counts as 1, anything
+// else as 0.55. Backticks are markup, not ink. Used only to split the card's
+// width between columns, so an estimate is enough — every cell wraps anyway.
+function textWeight(text) {
+  var s = String(text === undefined || text === null ? "" : text).replace(/`/g, "")
+  var w = 0
+  for (var i = 0; i < s.length; i++) {
+    var c = s.charCodeAt(i)
+    w += (c > 0x2e7f && c < 0xa000) || (c >= 0xff01 && c <= 0xff60) ? 1 : 0.55
+  }
+  return w
+}
+
+// Column widths for a table, in whole pixels that add up to `available`.
+// Each column asks for the widest cell it holds; a column below `minColumn`
+// is topped up from the ones with room to spare, and no column may take more
+// than 60% of the row — a wide description column must not squeeze a label
+// column into mid-word wrapping.
+function tableWidths(header, rows, available, minColumn) {
+  var head = header || []
+  var body = rows || []
+  var columns = head.length
+  var i, j
+  for (i = 0; i < body.length; i++) columns = Math.max(columns, body[i].length)
+  if (columns <= 0) return []
+
+  var avail = Math.max(1, Math.floor(Number(available) || 0))
+  var min = Math.max(1, Math.floor(Number(minColumn) || 0))
+
+  var weights = []
+  for (j = 0; j < columns; j++) weights.push(0)
+  for (j = 0; j < columns; j++) weights[j] = Math.max(weights[j], textWeight(head[j]))
+  for (i = 0; i < body.length; i++) {
+    for (j = 0; j < columns; j++) weights[j] = Math.max(weights[j], textWeight(body[i][j]))
+  }
+  var total = 0
+  for (j = 0; j < columns; j++) {
+    // A header of dashes or an empty column still needs room for its border
+    // and a couple of characters.
+    weights[j] = Math.max(weights[j], 2)
+    total += weights[j]
+  }
+
+  var px = []
+  for (j = 0; j < columns; j++) px.push(avail * weights[j] / total)
+
+  if (min * columns >= avail) {
+    // Too many columns for the card: equal shares, minColumn cannot be honoured.
+    for (j = 0; j < columns; j++) px[j] = avail / columns
+  } else {
+    // 1. Top up columns narrower than the minimum, taking the pixels from the
+    //    ones with room to spare.
+    var deficit = 0
+    var flexible = 0
+    for (j = 0; j < columns; j++) {
+      if (px[j] < min) {
+        deficit += min - px[j]
+        px[j] = min
+      } else {
+        flexible += px[j]
+      }
+    }
+    if (deficit > 0 && flexible > deficit) {
+      var scale = (flexible - deficit) / flexible
+      for (j = 0; j < columns; j++) if (px[j] > min) px[j] *= scale
+    }
+
+    // 2. Cap the widest column so a huge description cannot squeeze the rest.
+    //    The pixels it gives up go to the other columns (growing them past
+    //    their minimum if needed) — with two columns a hard cap is otherwise
+    //    impossible, and a balanced 40/60 beats 20/80. A single-column table
+    //    fills the row by definition.
+    if (columns > 1) {
+      var cap = Math.max(min, avail * 0.6)
+      for (var pass = 0; pass < 2; pass++) {
+        var excess = 0
+        var room = 0
+        for (j = 0; j < columns; j++) {
+          if (px[j] > cap) {
+            excess += px[j] - cap
+            px[j] = cap
+          }
+        }
+        for (j = 0; j < columns; j++) if (px[j] < cap) room += px[j]
+        if (excess === 0 || room === 0) break
+        for (j = 0; j < columns; j++) {
+          if (px[j] < cap) px[j] += excess * px[j] / room
+        }
+      }
+    }
+  }
+
+  var out = []
+  var used = 0
+  for (j = 0; j < columns; j++) {
+    out.push(Math.floor(px[j]))
+    used += out[j]
+  }
+  // Integer widths must still fill the row exactly, or the right border falls
+  // short of the card edge. The spare pixels go back in proportionally, one
+  // pixel at a time to the widest column first.
+  var order = []
+  for (j = 0; j < columns; j++) order.push(j)
+  order.sort(function (a, b) { return out[b] - out[a] })
+  var rest = avail - used
+  for (j = 0; rest > 0; j++) {
+    out[order[j % columns]] += 1
+    rest--
+  }
+  return out
+}
+
+// Everything Table.qml needs, flattened so the QML side stays a plain Repeater
+// over one array: GridLayout reads `columns`, the repeater reads `cells`, and
+// each cell carries its own width and its edges' "am I on the border" flags.
+function tableGrid(header, rows, available, minColumn) {
+  var head = header || []
+  var body = rows || []
+  var columns = head.length
+  var i, j
+  for (i = 0; i < body.length; i++) columns = Math.max(columns, body[i].length)
+  if (columns <= 0) return { columns: 0, rows: 0, widths: [], cells: [] }
+
+  var widths = tableWidths(head, body, available, minColumn)
+  var cells = []
+
+  function pushRow(cellsOfRow, isHeader) {
+    for (var c = 0; c < columns; c++) {
+      cells.push({
+        text: String(cellsOfRow[c] === undefined || cellsOfRow[c] === null ? "" : cellsOfRow[c]).trim(),
+        width: widths[c],
+        header: isHeader,
+        lastColumn: c === columns - 1,
+        lastRow: false,
+        column: c
+      })
+    }
+  }
+
+  pushRow(head, true)
+  for (i = 0; i < body.length; i++) pushRow(body[i], false)
+  for (i = cells.length - columns; i < cells.length; i++) cells[i].lastRow = true
+
+  return { columns: columns, rows: body.length + 1, widths: widths, cells: cells }
+}
+
 // Escape tag-shaped `<...>` outside inline code spans. A span opens with a
 // run of N backticks and closes with a run of the same length; an unmatched
 // run is literal text, not code.

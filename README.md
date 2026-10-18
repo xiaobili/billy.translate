@@ -167,32 +167,25 @@ translating only the human-readable text inside it — so a structured source
 stays structured in the target language. Copy still copies the Markdown source,
 so pasting elsewhere keeps the formatting.
 
-**Tables are the one structure that is rewritten, not rendered.** Qt's
-`Text.MarkdownText` builds a `QTextTable` for a Markdown table, and re-laying
+**Tables are rendered by the bubble itself, not by `Text.MarkdownText`.** Qt's
+Markdown importer builds a `QTextTable` for a Markdown table, and re-laying
 that table out when the text changes again crashes the scene graph
 (`QSGBatchRenderer::Renderer::prepareAlphaBatches`, SIGSEGV — the whole shell
 goes down with it). A streaming translation changes the text ten times a
 second, so a table in the answer was enough to take the shell out mid-stream;
-this is what `ALT + SHIFT + D` on a table used to do. Tables in
-Markdown-rendered modes are therefore flattened into a bulleted list before
-they reach the renderer — one item per row, cells joined by an em dash, the
-`| --- |` row dropped and the header kept as the first item:
+this is what `ALT + SHIFT + D` on a table used to do.
 
-```markdown
-| File        | Purpose |
-| ----------- | ------- |
-| `SKILL.md`  | Setup   |
-```
+The answer is therefore split into blocks (`Translate.splitBlocks`): prose goes
+to a Markdown `Text` as before, and each table goes to `Table.qml`, which
+draws the grid as ordinary QML rectangles — full borders, a bold header row,
+column widths proportioned to the widest cell in each column (never narrower
+than `minColumnWidth`, never wider than 60% of the card). Cells render their
+own inline Markdown (code, bold, links) and wrap inside their column.
 
-renders as
-
-```markdown
-- File — Purpose
-- `SKILL.md` — Setup
-```
-
-Everything else in the translation (headings, lists, emphasis, code) renders as
-before. Copy is unaffected: it takes the untransformed translation.
+Prose keeps every other construct — headings, lists, emphasis, code — and a
+`flattenTables` pass behind the splitter is the safety net: if a table ever
+slipped past `splitBlocks`, it degrades to a list instead of reaching
+`MarkdownText`. Copy is unaffected: it takes the untransformed translation.
 
 ## How the selection is read
 
@@ -247,14 +240,16 @@ harness — after any QML edit, restart the shell rather than trusting a
 hot-reload, because a plugin that fails to compile keeps reporting the stale
 error and the stale line number.
 
-Table flattening is covered by the pure-function tests, which is also what keeps
-the crash from coming back: the failure mode is a scene-graph crash on a *second*
-layout of a table, so it can only be reproduced against a real renderer. The
+Table handling (block splitting, column layout, and the flattening safety net)
+is covered by the pure-function tests, which is also what keeps the crash from
+coming back: the failure mode is a scene-graph crash on a *second* layout of a
+table, so it can only be reproduced against a real renderer. The
 offscreen QML platform is not one — it reports `GraphicsInfo.api == 0` and never
 builds batches — so a headless render test would pass whether the transform
 runs or not. To check it by hand, stream a Markdown table into a
 `Text.MarkdownText` under `QT_QPA_PLATFORM=wayland`; unflattened it segfaults in
-`QSGBatchRenderer::Renderer::prepareAlphaBatches`, flattened it renders as a list.
+`QSGBatchRenderer::Renderer::prepareAlphaBatches`, split into blocks it renders
+as prose plus a `Table.qml` grid.
 
 The entry point is not inert: the `bin/` section drives the real clipboard, and
 `pick-text`'s fallback case synthesises a `Ctrl+C` into whichever window has

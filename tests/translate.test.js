@@ -216,6 +216,10 @@ check("state is reported back to the caller",
 // text change and the scene graph dies in prepareAlphaBatches, taking the
 // shell with it. flattenTables() turns every row into a list item so a table
 // never reaches the renderer. (See the comment on the function.)
+//
+// The bubble now lifts tables out into real Table.qml grids instead, so this
+// is the safety net for prose that splitBlocks leaves behind — but the tests
+// stay: the net must still hold.
 
 check("a row becomes a list item, the delimiter row is dropped",
   T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n"),
@@ -248,5 +252,65 @@ check("a partial table (header only, no delimiter yet) stays as it is",
 check("flattening is idempotent",
   T.flattenTables(T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n")),
   T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n"))
+
+// ----------------------------------------------------------- block split
+// The bubble renders prose and tables as separate items (Table.qml draws the
+// grid), so splitBlocks() is the boundary the crash cannot cross: whatever it
+// hands to Text.MarkdownText must contain no table.
+
+check("prose and table become two blocks in order",
+  JSON.stringify(T.splitBlocks("## Files\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nafter")),
+  JSON.stringify([
+    { kind: "md", text: "## Files" },
+    { kind: "table", header: ["a", "b"], rows: [["1", "2"]] },
+    { kind: "md", text: "after" }
+  ]))
+check("the header row is split out of the body rows",
+  T.splitBlocks("| h1 | h2 |\n| --- | --- |\n| 1 | 2 |\n")[0],
+  { kind: "table", header: ["h1", "h2"], rows: [["1", "2"]] })
+check("two tables with prose between give three blocks",
+  T.splitBlocks("| a |\n| --- |\nmid\n| b |\n| --- |").map(function (b) { return b.kind }),
+  ["table", "md", "table"])
+check("a table in a fenced block stays prose",
+  T.splitBlocks("```\n| a |\n| --- |\n```\n").map(function (b) { return b.kind }),
+  ["md"])
+check("a prose-only answer stays one block, blank lines and all",
+  T.splitBlocks("a\n\n\n\nb"),
+  [{ kind: "md", text: "a\n\n\n\nb" }])
+check("empty input gives no blocks", T.splitBlocks("").length, 0)
+check("blocks carry no table syntax into the md kind",
+  T.splitBlocks("| a | b |\n| --- | --- |\n| 1 | 2 |").every(function (b) {
+    return b.kind === "table"
+  }), true)
+
+// ------------------------------------------------------------ table layout
+
+check("widths sum exactly to the available width",
+  T.tableWidths(["a", "b"], [["1", "2"]], 392, 68).reduce(function (a, b) { return a + b }, 0), 392)
+check("no column is narrower than the minimum",
+  T.tableWidths(["k", "v"], [["k", "a very long value column that dominates the row"]], 392, 68)
+    .every(function (w) { return w >= 68 }), true)
+check("no column takes more than 60% of a multi-column row",
+  T.tableWidths(["a", "b"], [["a", new Array(80).join("w")]], 392, 68).every(function (w) {
+    return w <= Math.ceil(392 * 0.6)
+  }), true)
+check("a single-column table fills the row",
+  T.tableWidths(["only"], [["one"]], 392, 68), [392])
+check("too many columns fall back to equal shares",
+  T.tableWidths(["a", "b", "c", "d", "e", "f", "g", "h"], [new Array(8).fill("x")], 100, 68),
+  [13, 13, 13, 13, 12, 12, 12, 12])
+
+check("grid flattens every cell with its width and edge flags",
+  (function () {
+    var g = T.tableGrid(["h1", "h2"], [["r1c1", "r1c2"], ["r2c1"]], 392, 68)
+    return [
+      g.columns, g.rows, g.cells.length,
+      g.cells[0].header, g.cells[0].width === g.widths[0], g.cells[1].lastColumn,
+      g.cells[4].lastRow, g.cells[4].text, g.cells[5].text
+    ]
+  })(),
+  [2, 3, 6, true, true, true, true, "r2c1", ""])
+check("an empty table gives an empty grid",
+  T.tableGrid([], [], 392, 68), { columns: 0, rows: 0, widths: [], cells: [] })
 
 report()

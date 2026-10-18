@@ -85,25 +85,30 @@ Item {
         root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing - root.captionHeight))
     : root.selectionResultCap
 
-  // What MarkdownText actually receives, for Markdown-rendered modes.
+  // The answer cut into renderable blocks, for the Markdown-rendered modes:
+  // prose (a Text) and tables (a Table, drawn as QML). Empty in plain modes,
+  // which render the raw translation in a single Text.
   //
-  // Two transforms, one pass, whole text:
-  //   flattenTables()  every table becomes a list of its rows, because a real
-  //                    table in this Text kills the shell — Qt re-lays the
-  //                    QTextTable out on the next text change and the frame
-  //                    dies in prepareAlphaBatches (SIGSEGV); a streaming
-  //                    translation changes the text ten times a second.
-  //   escapeHtmlTags() tag-shaped `<...>` would be parsed and dropped.
+  // Tables are lifted out here because Text.MarkdownText cannot draw one: Qt
+  // builds a QTextTable and re-laying it out on the next text change crashes
+  // the scene graph (prepareAlphaBatches, SIGSEGV — it took the shell down
+  // mid-stream). Nothing about that is tied to table size, so every table goes
+  // through Table.qml, at any stage of the stream.
   //
-  // 0.2.1 escaped incrementally, caching the lines already done. Table
-  // flattening rules that out: whether a line is a row depends on the line
-  // *after* it (the `| --- |` delimiter), so a stream can rewrite a header it
-  // has already emitted and no prefix cache stays valid. The whole-text pass
-  // is cheap by comparison — 0.16 ms for a 2.3 KB answer, against text layouts
-  // that cost far more per frame.
-  readonly property string displayText: {
-    if (!root.renderMarkdown) return root.translation
-    return Translate.escapeHtmlTags(Translate.flattenTables(root.translation))
+  // The caret is part of this model rather than the view: it belongs at the end
+  // of the last block, and a table has no text to append it to.
+  readonly property var blocks: {
+    if (!root.renderMarkdown) return []
+    var source = root.phase === "error" && root.translation === ""
+      ? root.errorText : root.translation
+    if (String(source) === "") return []
+    var list = Translate.splitBlocks(source)
+    if (root.phase === "translating") {
+      var last = list.length > 0 ? list[list.length - 1] : null
+      if (last !== null && last.kind === "md") last.text = last.text + "▌"
+      else list.push({ kind: "md", text: "▌" })
+    }
+    return list
   }
 
   function restoreDraft(text) {
@@ -322,14 +327,22 @@ Item {
       // final when done, or the failure reason when nothing arrived at all.
       // The block caret is what says "still arriving" — a spinner would be
       // heavier than a bubble this size deserves.
+      //
+      // Markdown-rendered modes draw the answer as a column of blocks, because
+      // tables need their own renderer: Text.MarkdownText would build a
+      // QTextTable, and re-laying that out on the next text change crashes the
+      // scene graph (see Translate.splitBlocks / Table.qml). Plain modes have
+      // nothing to parse and stay a single Text.
       Flickable {
         id: resultView
         width: parent.width
         visible: root.phase !== "empty" && root.phase !== "recognizing"
-        height: Math.min(resultText.implicitHeight, root.resultCap)
+        readonly property real bodyHeight: root.renderMarkdown
+          ? resultBody.implicitHeight : resultText.implicitHeight
+        height: Math.min(bodyHeight, root.resultCap)
         opacity: root.stale ? 0.6 : 1
         contentWidth: width
-        contentHeight: resultText.implicitHeight
+        contentHeight: bodyHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
@@ -351,43 +364,81 @@ Item {
 
         Text {
           id: resultText
-          width: resultView.width
-          // Markdown rendering (input and rich modes only — see
-          // root.renderMarkdown): the translation may contain headings,
-          // lists, bold/italic, code and links (either from a rich-text
-          // selection or from the model preserving structure).
-          // Text.MarkdownText renders those; plain text without Markdown
-          // syntax renders unchanged. The streaming caret is appended as
-          // plain text so a partial Markdown construct still shows progress
-          // rather than vanishing.
-          //
-          // MarkdownText parses `<...>` as inline HTML and drops it, so a
-          // tag-shaped sequence that survived translation (List<String>,
-          // <name>, a literal tag) would vanish from the bubble. Escaping
-          // its `<` to `&lt;` renders it literally; code spans and fenced
-          // blocks are already literal and are left alone. Copy still takes
-          // the unescaped `translation`, so pasting keeps the original text.
-          // Plain-text modes skip the escape: there is nothing to parse, and
-          // `&lt;` would show up verbatim.
-          //
-          // Tables never reach MarkdownText as tables: root.displayText
-          // flattens them into list items first, because a table re-laid out
-          // on a later text change crashes the scene graph (see
-          // Translate.flattenTables).
-          textFormat: root.renderMarkdown ? Text.MarkdownText : Text.PlainText
+          width: parent.width
+          visible: !root.renderMarkdown
+          // Selection and OCR text is arbitrary — its `*`, `#`, backticks and
+          // `<...>` are usually literal characters, so MarkdownText would
+          // mangle the display. PlainText shows it as captured.
+          textFormat: Text.PlainText
           text: {
-            var bodyText
-            if (root.phase === "error" && root.translation === "")
-              bodyText = root.renderMarkdown ? Translate.escapeHtmlTags(root.errorText) : root.errorText
-            else if (root.phase === "empty" || root.phase === "recognizing") bodyText = ""
-            else if (root.phase === "translating") bodyText = root.displayText + "▌"
-            else bodyText = root.displayText
-            return bodyText
+            if (root.phase === "error" && root.translation === "") return root.errorText
+            if (root.phase === "empty" || root.phase === "recognizing") return ""
+            return root.translation
           }
           color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground
           wrapMode: Text.Wrap
           font.family: Style.font.resolvedFamily
           font.pixelSize: Style.font.body
+        }
+
+        Column {
+          id: resultBody
+          width: parent.width
+          visible: root.renderMarkdown
+          spacing: Style.space(6)
+
+          Repeater {
+            model: root.blocks.length
+
+            delegate: Item {
+              id: blockItem
+              width: resultBody.width
+              // `blocks` is rebuilt on every flush; reading it by index keeps
+              // this delegate alive across updates — Repeater only recreates
+              // when the block *count* changes, not when a cell grows.
+              readonly property var block: root.blocks[index] || { kind: "md", text: "" }
+              implicitHeight: block.kind === "table"
+                ? tableBlock.implicitHeight : textBlock.implicitHeight
+              height: implicitHeight
+
+              Text {
+                id: textBlock
+                width: parent.width
+                visible: blockItem.block.kind !== "table"
+                // MarkdownText parses `<...>` as inline HTML and drops it, so
+                // a tag-shaped sequence that survived translation
+                // (List<String>, <name>, a literal tag) would vanish. Escaping
+                // its `<` renders it literally; code spans and fences are
+                // already literal and are left alone. Copy still takes the
+                // unescaped `translation`, so pasting keeps the original.
+                //
+                // flattenTables is a safety net: splitBlocks already lifted
+                // every table out of the prose, and this catches the one it
+                // could not parse rather than letting a table reach the
+                // renderer.
+                textFormat: Text.MarkdownText
+                text: blockItem.block.kind === "table" ? ""
+                  : Translate.escapeHtmlTags(Translate.flattenTables(blockItem.block.text))
+                color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground
+                wrapMode: Text.Wrap
+                font.family: Style.font.resolvedFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Table {
+                id: tableBlock
+                width: parent.width
+                visible: blockItem.block.kind === "table"
+                header: blockItem.block.header || []
+                rows: blockItem.block.rows || []
+                borderColor: Color.popups.border
+                textColor: Color.foreground
+                fontFamily: Style.font.resolvedFamily
+                fontSize: Style.font.bodySmall
+                minColumnWidth: Style.space(56)
+              }
+            }
+          }
         }
       }
 

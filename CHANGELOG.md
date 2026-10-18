@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0
+
+- Tables in Markdown-rendered modes (`ALT + SHIFT + D`, `ALT + I`) now render
+  as real framed grids instead of crashing the shell. The answer is split into
+  blocks: prose stays a Markdown `Text`, each table is drawn by a new
+  `Table.qml` (borders, bold header row, columns proportioned to their widest
+  cell with a 60% width cap and a minimum column width). `Text.MarkdownText`
+  never sees a table, so the `QTextTable` re-layout that killed the scene
+  graph cannot happen — streaming or not.
+- The prose/tables split happens per flush (`Translate.splitBlocks`); a
+  `flattenTables` pass behind it is the safety net for anything the splitter
+  cannot parse. Copy still returns the original Markdown.
+- Tests: 14 cases for `splitBlocks` / `tableWidths` / `tableGrid` on top of the
+  flattener's 11 (107 total). Verified by rendering the crashing answer in a
+  live `Text.MarkdownText` + `Table.qml` harness under `QT_QPA_PLATFORM=
+  wayland`: the old path segfaulted 3/3 runs, the new one exits cleanly 3/3.
+
 ## 0.2.2
 
 - Translating a table no longer kills the shell. `Text.MarkdownText` cannot
