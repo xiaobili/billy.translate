@@ -1,0 +1,195 @@
+===== Version Information =====
+Quickshell: 0.3.2 (revision 2b4501a282689792b62e94f3fb30d8f512324fe6, distributed by Omarchy)
+Qt: 6.12.0 (built against 6.12.0)
+
+===== Build Information =====
+Build Type: RelWithDebInfo
+Compiler: GNU (16.2.1)
+Compile Flags: -march=x86-64 -mtune=generic -O2 -pipe -fno-plt -fexceptions         -Wp,-D_FORTIFY_SOURCE=3 -Wformat -Werror=format-security         -fstack-clash-protection -fcf-protection         -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -Wp,-D_GLIBCXX_ASSERTIONS -g -ffile-prefix-map=/src/quickshell/src=/usr/src/debug/quickshell -flto=auto
+Configuration:
+  Distributor: Omarchy
+  Disable precompild headers (dev): OFF
+  Build tests (dev): OFF
+  ASAN (dev): OFF
+  Keep Frame Pointers (dev): OFF
+  Use jemalloc: ON
+  Crash Handling: ON
+  Unix Sockets: ON
+  Wayland: ON
+    Wlroots Layer-Shell: ON
+    Session Lock: ON
+    Foreign Toplevel Management: ON
+    Hyprland: ON
+      Hyprland IPC: ON
+      Hyprland Global Shortcuts: ON
+      Hyprland Focus Grabbing: ON
+      Hyprland Surface Extensions: ON
+    Screencopy: ON
+      Image Copy Capture: ON
+      Wlroots Screencopy: ON
+      Hyprland Toplevel Export: ON
+  X11: ON
+  I3/Sway: ON
+    I3/Sway IPC: ON
+  System Tray: ON
+  PipeWire: ON
+  Mpris: ON
+  Pam: ON
+  Polkit: ON
+  Greetd: ON
+  UPower: ON
+  Notifications: ON
+  Bluetooth: ON
+  Network: ON
+
+===== System Information =====
+GPU /dev/dri/renderD128
+  Driver: i915 1.6.0 (Intel Graphics)
+  Model: 8086:9bc4
+  Address: PCI 00:02.0
+
+/etc/os-release:
+NAME="Omarchy"
+PRETTY_NAME="Omarchy"
+ID=omarchy
+ID_LIKE=arch
+BUILD_ID="4.0.5"
+VERSION_ID="4.0.5"
+ANSI_COLOR="38;2;158;206;106"
+HOME_URL="https://omarchy.org/"
+DOCUMENTATION_URL="https://learn.omacom.io/2/the-omarchy-manual"
+SUPPORT_URL="https://discord.gg/tXFUdasqhY"
+BUG_REPORT_URL="https://github.com/basecamp/omarchy/issues"
+LOGO=omarchy
+
+/etc/lsb-release:FAILED TO OPEN
+
+===== Environment (trimmed) =====
+QS_NO_RELOAD_POPUP=1
+QS_DISABLE_FILE_WATCHER=1
+QT_QPA_PLATFORMTHEME=gtk3
+XDG_CURRENT_DESKTOP=Hyprland
+QT_QPA_PLATFORM=wayland;xcb
+QT_IM_MODULE=fcitx
+QT_QUICK_CONTROLS_STYLE=Fusion
+
+===== Instance Information =====
+Signal: 段错误 (11)
+Crashed process ID: 50908
+Run ID: x121kxc3nt
+Shell ID: c0240dfe8c8e8a421e1f8db23a03fc60
+Config Path: /usr/share/omarchy/shell/shell.qml
+
+===== Stacktrace =====
+#0 0x00007f9cba43e6ef at /usr/bin/../lib/libc.so.6
+#1 0x00007f9cbc8b74e4 in QSGBatchRenderer::Renderer::prepareAlphaBatches() at /usr/bin/../lib/libQt6Quick.so.6
+#2 0x00007f9cbc8bbd23 in QSGBatchRenderer::Renderer::prepareRenderPass(QSGBatchRenderer::Renderer::RenderPassContext*) at /usr/bin/../lib/libQt6Quick.so.6
+#3 0x00007f9cbc8bdd3c in QSGBatchRenderer::Renderer::render() at /usr/bin/../lib/libQt6Quick.so.6
+#4 0x00007f9cbc8dc2e0 at /usr/bin/../lib/libQt6Quick.so.6
+#5 0x00007f9cbc868e54 in QQuickWindowPrivate::renderSceneGraph() at /usr/bin/../lib/libQt6Quick.so.6
+#6 0x00007f9cbcac350e at /usr/bin/../lib/libQt6Quick.so.6
+#7 0x00007f9cbaf78fda at /usr/bin/../lib/libQt6Core.so.6
+#8 0x00007f9cba498041 at /usr/bin/../lib/libc.so.6
+#9 0x00007f9cba52072b at /usr/bin/../lib/libc.so.6
+
+===== Log Tail =====
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a9ba800) of "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8a9ba800) at "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8f1d0a00) of "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8f1d0a00) at "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a9bac00)
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8f1d0a00)
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a9ba800)
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a827800) of "/proc/uptime"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Reader started for "/proc/uptime"
+2026-10-18 15:03:51.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a827800)
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a9bac00) of "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8a9bac00) at "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a9ba800) of "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8a9ba800) at "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8f1d0a00) of "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8f1d0a00) at "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a9bac00)
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a9ba800)
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8f1d0a00)
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a827800) of "/proc/uptime"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Reader started for "/proc/uptime"
+2026-10-18 15:03:54.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a827800)
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Received property change set and invalidations for org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/Devices/4/org.freedesktop.NetworkManager.Device.Wireless
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Ignoring untracked property update "AccessPoints" for "org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/Devices/4/org.freedesktop.NetworkManager.Device.Wireless"
+2026-10-18 15:03:55.000 DEBUG quickshell.network.networkmanager: Access point removed: "/org/freedesktop/NetworkManager/AccessPoint/11"
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Received property change set and invalidations for org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/Devices/4/org.freedesktop.NetworkManager.Device.Wireless
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Updated property org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/Devices/4/org.freedesktop.NetworkManager.Device.Wireless:LastScan to QDateTime(2026-10-18 15:03:55.427 CST Qt::LocalTime) 
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Received property change set and invalidations for org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/AccessPoint/1/org.freedesktop.NetworkManager.AccessPoint
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Ignoring untracked property update "LastSeen" for "org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/AccessPoint/1/org.freedesktop.NetworkManager.AccessPoint"
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Received property change set and invalidations for org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/AccessPoint/2/org.freedesktop.NetworkManager.AccessPoint
+2026-10-18 15:03:55.000 DEBUG quickshell.dbus.properties: Ignoring untracked property update "LastSeen" for "org.freedesktop.NetworkManager/org/freedesktop/NetworkManager/AccessPoint/2/org.freedesktop.NetworkManager.AccessPoint"
+2026-10-18 15:03:56.000  INFO quickshell.ipc: New IPC connection qs::ipc::IpcServerConnection(0x7f9c8a8b02c0)
+2026-10-18 15:03:56.000 DEBUG quickshell.hyprland.ipc.events: Received event: "activelayout>>hl-virtual-keyboard-wtype,English (US)" parsed as "activelayout" "hl-virtual-keyboard-wtype,English (US)"
+2026-10-18 15:03:56.000 DEBUG quickshell.hyprland.ipc.events: Received event: "activelayout>>hl-virtual-keyboard-wtype,error" parsed as "activelayout" "hl-virtual-keyboard-wtype,error"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async save for FileView_QMLTYPE_6(0x7f9c7992b200) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Writer started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93ee9a00) of "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93ee9a00) at "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93ee9a00)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93c0c400) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93c0c400) at "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c7992b200) at "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c7992b200)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93c0c400)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93ee9a00) of "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93ee9a00) at "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93ee9a00)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async save for FileView_QMLTYPE_6(0x7f9c7992b200) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Writer started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Writer started for "/home/billy/.local/state/omarchy/translate/body.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c7992b200)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93c0c400) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93c0c400) at "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c7992b200) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c7992b200) at "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93c0c400)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c7992b200)
+2026-10-18 15:03:56.000 DEBUG quickshell.hyprland.ipc.events: Received event: "openlayer>>billy-translate" parsed as "openlayer" "billy-translate"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93ee9a00) of "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93ee9a00) at "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93ee9a00)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async save for FileView_QMLTYPE_6(0x7f9c7992b200) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Writer started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93c0c400) of "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93c0c400) at "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c7992b200) at "/home/billy/.local/state/omarchy/clipboard-history.json"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c7992b200)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93c0c400)
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c93ee9a00) of "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c93ee9a00) at "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/indicators"
+2026-10-18 15:03:56.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c93ee9a00)
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a9bac00) of "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8a9bac00) at "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/current/theme/colors.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a9ba800) of "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8a9ba800) at "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.local/state/omarchy/current/theme/shell.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8f1d0a00) of "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Reader started for "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Creating watcher for FileView_QMLTYPE_6(0x7f9c8f1d0a00) at "/home/billy/.config/omarchy/shell.toml"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a9bac00)
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a9ba800)
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8f1d0a00)
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Starting async load for FileView_QMLTYPE_6(0x7f9c8a827800) of "/proc/uptime"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Reader started for "/proc/uptime"
+2026-10-18 15:03:57.000 DEBUG quickshell.io.fileview: Async operation finished for FileView_QMLTYPE_6(0x7f9c8a827800)
