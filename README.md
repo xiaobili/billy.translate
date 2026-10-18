@@ -4,8 +4,36 @@ Select text anywhere, press `ALT + D`, read the translation in a
 bubble at the cursor. Translations stream in, and the bubble copies with one
 click.
 
-- **Selects Chinese** → translates to English
-- **Selects anything else** → translates to Simplified Chinese
+The source language is detected from the text and the target follows a default
+you set once; out of the box that is Chinese → English, everything else →
+Simplified Chinese. Click the arrow in the bubble's header (or press `Ctrl+L`)
+to pick a different target for the session.
+
+## Languages
+
+Twelve targets ship: Chinese (Simplified and Traditional), English, Japanese,
+Korean, Spanish, French, German, Russian, Portuguese, Italian, Arabic.
+
+- **Detection is local.** `Translate.detectLang` counts Unicode script ranges
+  (CJK, kana, Hangul, Cyrillic, Arabic, Thai, Devanagari) and, for Latin text,
+  scores stopword density plus characteristic spelling. No extra request, no
+  latency, and it works before the model's first token.
+- **Non-prose is stripped first.** URLs, code (fenced and inline), HTML tags
+  and attributes, file names, paths and Markdown link targets are removed
+  before counting. Detection is a density measurement, so without this a
+  single URL could outvote a short sentence — `a` inside `example.com` once
+  made Chinese read as Portuguese in rich mode. Link *labels* and image
+  captions are dropped too; neither is the author's prose.
+- **The target defaults to `targetLang`.** When that language is also the
+  detected source, the built-in pair takes over instead (Chinese → English,
+  anything else → Chinese) — asking a model to translate German into German
+  produces nothing useful.
+- **Detection is heuristic, not authoritative.** Short Latin-script strings
+  ("OK", "Bonjour") can land on the wrong Romance or Germanic language, and
+  mixed-script text resolves to whichever script dominates. A short Latin
+  sentence with a long URL can also lose the evidence it needed to be
+  identified. Correct a wrong guess from the picker; the translation re-runs
+  immediately.
 
 ## Installing
 
@@ -23,8 +51,9 @@ Third-party plugins are not enabled by default. The id has to be in
 | `ALT + SHIFT + D`       | Translate the selection **with formatting** (see below); press again to dismiss |
 | `ALT + O`               | Select a screen region, OCR it, and translate the text                     |
 | `ALT + I`               | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
+| `Ctrl + L`              | Open/close the language picker (or click the arrow in the header)          |
 | *(unbound)*             | Copy the translation — use the bubble's copy button, or the IPC verb below |
-| `Esc`, or click outside | Dismiss                                                                    |
+| `Esc`, or click outside | Close the picker first, then dismiss                                       |
 
 Bind the chords in `~/.config/hypr/bindings.lua`:
 
@@ -103,7 +132,8 @@ run from the chat plugin's config:
 | `baseUrl`      | Any OpenAI-compatible root, e.g. `https://api.deepseek.com/v1` |
 | `model`        | Model id                                                       |
 | `apiKey`       | Bearer token; leave empty for a local server that needs none   |
-| `systemPrompt` | Empty uses the built-in translation prompt                     |
+| `systemPrompt` | Empty uses the built-in translation prompt; see below          |
+| `targetLang`   | Default target language, e.g. `ja`; empty means the built-in pair |
 | `temperature`  | `0.2` by default — translation wants determinism               |
 | `maxTokens`    | `0` means "do not send the field"                              |
 | `timeoutSec`   | Request timeout, `60` by default                               |
@@ -118,7 +148,27 @@ A failed request with a 429 or 5xx status is retried automatically — twice,
 after 1s and 2s — since those are usually transient. Anything else (auth,
 bad URL, timeout, dismissal) fails fast as before. A repeated translation of
 the same text through the same model and prompt is answered from an in-memory
-cache (8 entries) instead of another API call.
+cache (8 entries) instead of another API call. The detected direction is part
+of the cache key, so the same text into two languages is two entries.
+
+### Language codes and prompts
+
+`targetLang` takes one of `zh`, `zh-TW`, `en`, `ja`, `ko`, `es`, `fr`, `de`,
+`ru`, `pt`, `it`, `ar`; anything unrecognised is ignored and the built-in pair
+applies. The picker writes this key when you choose a language, so
+`config.json` and the UI never disagree.
+
+The built-in prompt names the direction it wants ("translate from German into
+Japanese"). A custom `systemPrompt` can interpolate `{{lang}}` (the target's
+English name) and `{{source}}` (the detected source's). With neither
+placeholder, the text is **appended** to the built-in rules rather than
+replacing them — the no-echo rule and the formatting rules are what keep a
+stream usable, and dropping them silently was the old behaviour's sharpest
+edge. Use a placeholder when you want full control instead:
+
+```json
+{ "systemPrompt": "Translate into {{lang}}. Keep code fences. Output only the translation." }
+```
 
 If a completed stream comes back identical to the input — a lazy model
 response, most often when the input is already near the target language — it
@@ -225,7 +275,10 @@ clipboard writes, and a clipboard watcher can observe the one in between.
    take keyboard focus would also be one you could not close with `Esc`.
 3. Some apps do not populate the primary selection at all, so they always take
    the fallback path.
-4. There is no settings UI. Edit the JSON.
+4. There is no settings UI for the connection (base URL, model, key). Edit the
+   JSON. Language choice *does* have a UI — the picker in the header.
+5. Language detection is heuristic (see Languages above). Very short or heavily
+   mixed text can be misread; the picker is the escape hatch.
 
 ## Tests
 
@@ -234,11 +287,23 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 ```
 
 Covers QML syntax (`qmllint`'s `[syntax]` class only), the pure functions in
-`Layout.js` and `Translate.js`, the `bin/` scripts, and one static assertion on
-`Transport.qml`. The QML layer has no
-harness — after any QML edit, restart the shell rather than trusting a
-hot-reload, because a plugin that fails to compile keeps reporting the stale
-error and the stale line number.
+`Layout.js` and `Translate.js` (166 cases, including language detection, the
+non-prose stripping, target resolution and prompt directions), the `bin/`
+scripts, and two offscreen render checks:
+
+- `tests/lang-render.qml` — the picker chips and the direction label
+  instantiate, and the row is non-empty. Verified by mutation: blanking a chip's
+  text fails it.
+- `tests/bubble-render.sh` — the **real** `Bubble.qml` loaded against the
+  installed `qs.Commons`/`qs.Ui`, with only the statically linked
+  `quickshell-coreplugin` stubbed. Asserts the card grows when the picker opens
+  and stays under `maxHeight`. Verified by mutation: hiding the picker fails it.
+  Skips (exit 0) on a machine without Omarchy's shell modules.
+
+Neither replaces a restart. After any QML edit, restart the shell rather than
+trusting a hot-reload, because a plugin that fails to compile keeps reporting the
+stale error and the stale line number. Check `journalctl --user -f` for
+`billy.translate` while the shell comes up.
 
 Table handling (block splitting, column layout, and the flattening safety net)
 is covered by the pure-function tests, which is also what keeps the crash from

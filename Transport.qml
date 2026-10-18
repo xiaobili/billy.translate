@@ -57,6 +57,13 @@ QtObject {
   property string cacheTag: ""
   property var cache: []
 
+  // The direction, resolved by Overlay.qml from the picked-up text and the
+  // configured default (Translate.detectLang / Translate.targetLang). Part of
+  // the body, the echo nudge and the cache key: changing the target must
+  // re-ask rather than replay the previous answer.
+  property string sourceLang: ""
+  property string targetLang: "zh"
+
   // Verbatim-echo handling: a model that returns the input unchanged gets one
   // retry with an explicit nudge (promptSuffix). echoRetried guards the retry;
   // echoed reports the final verdict to the bubble when the retry echoed too.
@@ -173,7 +180,8 @@ QtObject {
     root.truncated = text.length > root.maxChars
     root.sendText = root.truncated ? Translate.truncateText(text, root.maxChars) : text
 
-    var key = Translate.cacheKey(root.cacheTag, root.config, root.sendText)
+    var key = Translate.cacheKey(root.cacheTag, root.config, root.sendText,
+      root.sourceLang, root.targetLang)
     var hit = root.cacheFind(key)
     if (hit !== null) {
       root.output = hit.output
@@ -208,7 +216,8 @@ QtObject {
     // it reads exist.
     try {
       root.confFile.setText(root.curlConfigText())
-      root.bodyFile.setText(JSON.stringify(Translate.buildBody(root.config, root.sendText, root.promptSuffix)) + "\n")
+      root.bodyFile.setText(JSON.stringify(Translate.buildBody(root.config, root.sendText,
+        root.promptSuffix, root.sourceLang, root.targetLang)) + "\n")
     } catch (e) {
       root.fail("Could not prepare the request: " + e)
       return
@@ -350,7 +359,7 @@ QtObject {
     if (outcome === "done" && root.errorText === "" && root.output !== "" &&
         !root.echoRetried && Translate.isVerbatimEcho(root.sendText, root.output)) {
       root.echoRetried = true
-      root.promptSuffix = Translate.ECHO_NUDGE
+      root.promptSuffix = Translate.echoNudge(root.targetLang)
       root.launch()
       return
     }
@@ -363,7 +372,8 @@ QtObject {
     if (outcome === "done" && root.errorText === "" && root.output !== "") {
       var echoed = Translate.isVerbatimEcho(root.sendText, root.output)
       root.echoed = echoed
-      root.cacheStore(Translate.cacheKey(root.cacheTag, root.config, root.sendText), root.output, echoed)
+      root.cacheStore(Translate.cacheKey(root.cacheTag, root.config, root.sendText,
+        root.sourceLang, root.targetLang), root.output, echoed)
     }
     root.finished(outcome)
   }

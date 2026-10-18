@@ -28,8 +28,17 @@ Item {
   // mode === "selection" but renders as plain text.
   property bool richPick: false
   property string inputText: ""
+  // The target language the user picked, "" when the built-in Chinese/English
+  // pair is in force (see Translate.targetLang). The picker persists it.
+  property string targetCode: ""
   // P0.2: shown under the result when the request was truncated.
   property string noticeText: ""
+  // Modality: while the bubble is open it is the keyboard focus owner, so the
+  // picker is opened with the mouse or Ctrl+L and closed with Esc — and Esc
+  // has to close the picker before it closes the bubble.
+  property bool pickerOpen: false
+
+  signal targetPicked(string code)
   // The input area's own cap, and what Task 3's budget reads. `inputArea` is
   // the TextArea further down this same file.
   readonly property int inputInset: Style.space(6)
@@ -116,6 +125,23 @@ Item {
     inputArea.text = String(text || "")
   }
 
+  // Opening the picker re-measures the card; it closes by itself when a new
+  // translation starts, because it belongs to the gap between two answers and
+  // not to the answer. A zero-interval timer rather than a direct assignment:
+  // the phase changes inside the picker's own click handler, and hiding the
+  // clicked item mid-signal is the kind of teardown QML does not like.
+  property Timer pickerCloseTimer: Timer {
+    interval: 0
+    onTriggered: root.pickerOpen = false
+  }
+
+  Connections {
+    target: root
+    function onPhaseChanged() {
+      if (root.phase === "translating") root.pickerCloseTimer.restart()
+    }
+  }
+
   function selectAllInput() {
     if (root.mode !== "input") return
     inputArea.selectAll()
@@ -163,16 +189,37 @@ Item {
 
       // ------------------------------------------------------------- header
       Item {
+        id: headerRow
         width: parent.width
         height: Style.space(20)
 
-        Text {
+        // The direction label doubles as the language picker's toggle. It is a
+        // MouseArea rather than a Button so the header keeps its caption size:
+        // the label is a glance, and a button would grow the 20px row.
+        Item {
+          id: directionChip
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
-          text: root.directionLabel
-          color: Color.muted
-          font.family: Style.font.resolvedFamily
-          font.pixelSize: Style.font.caption
+          height: parent.height
+          width: directionText.implicitWidth + (root.pickerOpen ? Style.space(8) : 0)
+
+          Text {
+            id: directionText
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left
+            text: root.directionLabel
+            color: directionArea.containsMouse || root.pickerOpen ? Color.foreground : Color.muted
+            font.family: Style.font.resolvedFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          MouseArea {
+            id: directionArea
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.pickerOpen = !root.pickerOpen
+          }
         }
 
         Row {
@@ -194,6 +241,42 @@ Item {
             bordered: false
             focusable: false
             onClicked: root.closeRequested()
+          }
+        }
+      }
+
+      // ------------------------------------------------------ language picker
+      // Inline rather than a popup window: the overlay is the only focused
+      // surface, and a second window would need its own focus handling to be
+      // reachable at all. A Flow of small chips sits in the column under the
+      // header, so the card grows by a row or two while it is open and the
+      // placement clamp follows.
+      PanelSeparator {
+        width: parent.width
+        visible: root.pickerOpen
+      }
+
+      Flow {
+        id: languagePicker
+        width: parent.width
+        spacing: Style.space(4)
+        visible: root.pickerOpen
+
+        Repeater {
+          // "Auto" first: it is what the config had before this setting
+          // existed, and the only choice that lets the plugin decide.
+          model: [""].concat(Translate.languageCodes())
+
+          delegate: Button {
+            required property string modelData
+            readonly property bool isAuto: modelData === ""
+            text: isAuto ? "Auto" : Translate.languageLabel(modelData)
+            tooltipText: isAuto
+              ? "Built-in pair: Chinese to English, everything else to Chinese"
+              : Translate.languageName(modelData)
+            selected: Translate.normalizeLang(root.targetCode) === modelData
+            focusable: false
+            onClicked: root.targetPicked(modelData)
           }
         }
       }
@@ -256,7 +339,18 @@ Item {
             Keys.onPressed: function (event) {
               if (event.key === Qt.Key_Escape) {
                 event.accepted = true
-                root.closeRequested()
+                // Esc unwinds one layer at a time: the picker first, then the
+                // bubble. Closing both at once loses the draft-in-progress
+                // context you were just in.
+                if (root.pickerOpen) root.pickerOpen = false
+                else root.closeRequested()
+                return
+              }
+              // Ctrl+L opens the language picker in input mode too, where this
+              // TextArea, not the overlay's key item, is the focus owner.
+              if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier)) {
+                event.accepted = true
+                root.pickerOpen = !root.pickerOpen
                 return
               }
               if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {

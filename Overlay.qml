@@ -44,6 +44,12 @@ PanelWindow {
   property var cursorPos: null
   property string selectedText: ""
   property string directionLabel: ""
+  // The detected language of the text in hand, and the language it will go to.
+  // Both are resolved in exactly two places — admitText() for everything
+  // captured (selection/OCR/draft/typing) and admitSource() for a submission —
+  // so the bubble label and the request body cannot disagree.
+  property string sourceLang: ""
+  property string targetLang: "zh"
   property string failureText: ""
   property bool copied: false
 
@@ -203,6 +209,9 @@ PanelWindow {
   function submitInput() {
     if (root.mode !== "input") return
     if (root.inputText.trim() === "") return
+    // The direction must match the text being submitted, not the last
+    // keystroke's — a paste-then-Enter can outrun the label refresh.
+    root.refreshInputLabel()
     if (transport.streaming) {
       // Cancel and re-submit from finished(): Transport's start() returns
       // early while a child is still exiting, and cancel() cannot be awaited.
@@ -210,6 +219,7 @@ PanelWindow {
       transport.cancel()
       return
     }
+    root.admitText(root.inputText)
     root.submittedText = root.inputText
     root.failureText = ""
     root.phase = "translating"
@@ -219,9 +229,30 @@ PanelWindow {
   // The label follows the input, but goes blank rather than claiming a
   // direction for an empty field (walkthrough row 1), and is refreshed when a
   // restored draft reopens (row 8) rather than waiting for the next keystroke.
+  //
+  // Detection runs here rather than at submit: the label is the only feedback
+  // that the language was recognised, so it has to follow the typing. It is a
+  // script-and-stopword scan, not a model call — see Translate.detectLang.
+  //
+  // The target comes from targetLangSetting, not the raw config object, so it
+  // re-derives when the picker writes the config underneath it.
+  function admitText(text) {
+    var s = String(text === undefined || text === null ? "" : text)
+    root.sourceLang = Translate.detectLang(s)
+    root.targetLang = Translate.targetLang(root.sourceLang, root.targetLangSetting)
+    root.directionLabel = s.trim() === ""
+      ? "" : Translate.directionLabel(root.sourceLang, root.targetLangSetting)
+  }
+
   function refreshInputLabel() {
-    root.directionLabel = root.inputText.trim() === ""
-      ? "" : Translate.directionLabel(root.inputText)
+    root.admitText(root.inputText)
+  }
+
+  // Re-derive the label after the default language changed without new text
+  // (the picker, or a config edit): the source is unchanged, only the target.
+  function refreshDirection() {
+    if (root.mode === "input") root.refreshInputLabel()
+    else root.admitText(root.selectedText)
   }
 
   // P0.4: every input change refreshes the label and (debounced) persists the
@@ -229,6 +260,49 @@ PanelWindow {
   function handleInputChanged() {
     root.refreshInputLabel()
     root.draftTimer.restart()
+  }
+
+  // The target the user picked, or "" for the built-in Chinese/English pair.
+  // Derived rather than stored on its own: the config is the truth, so a hand
+  // edit to config.json takes effect the next time a bubble opens.
+  readonly property string targetLangSetting: root.config.ready
+    ? Translate.normalizeLang(root.config.config.targetLang || "") : ""
+
+  // A hand edit to config.json — the other way to set the target — must move
+  // the open bubble too, not just the next one. The picker path calls
+  // refreshDirection() itself before the config write lands, so this is only
+  // extra work when the two disagree.
+  onTargetLangSettingChanged: root.refreshDirection()
+
+  // Picker selection: persist it, then move the open bubble to the new
+  // direction. A translation already in flight was asked for the old one, so
+  // it is discarded rather than allowed to land under a label it contradicts;
+  // the input flow re-asks immediately, and so does a captured text that is
+  // still on screen. Empty is a real choice — it restores the built-in pair —
+  // and an unknown code is refused, since nothing would name it.
+  function setTargetLanguage(code) {
+    var next = Translate.normalizeLang(code)
+    if (next !== "" && Translate.languageInfo(next) === null) {
+      root.failureText = "Unknown language: " + String(code)
+      return
+    }
+    if (next === Translate.normalizeLang(root.config.config.targetLang || "")) return
+    root.config.setTargetLang(next)
+    root.discardNextFinish = transport.streaming
+    transport.cancel()
+    root.copied = false
+    root.refreshDirection()
+    if (root.mode === "input") {
+      if (root.inputText.trim() !== "") root.submitInput()
+      return
+    }
+    if (root.selectedText.trim() === "") return
+    // The text is still here; only the answer to it changed.
+    if (root.phase === "done" || root.phase === "error" || root.phase === "translating") {
+      root.failureText = ""
+      root.phase = "translating"
+      transport.start()
+    }
   }
 
   function copyTranslation() {
@@ -282,7 +356,7 @@ PanelWindow {
       // textReady starts a full translation behind a closed overlay.
       if (!root.opened || root.mode === "input") return
       root.selectedText = text
-      root.directionLabel = Translate.directionLabel(text)
+      root.admitText(text)
       root.phase = "translating"
       transport.start()
     }
@@ -298,6 +372,10 @@ PanelWindow {
     // F2: Transport does not derive the state path — Config owns it.
     dir: root.config.dir
     text: root.mode === "input" ? root.inputText : root.selectedText
+    // The direction the text was admitted in (label and body agree), and part
+    // of the cache key — the same words in a new target is a new request.
+    sourceLang: root.sourceLang
+    targetLang: root.targetLang
     // P0.3: the capture mode is part of the cache key — the same words as
     // Markdown (rich) and as plain text are different requests.
     cacheTag: root.mode + (root.richPick ? "-rich" : "")
@@ -312,6 +390,7 @@ PanelWindow {
       }
       if (root.pendingSubmit) {
         root.pendingSubmit = false
+        root.admitText(root.inputText)
         root.submittedText = root.inputText
         root.failureText = ""
         root.phase = "translating"
@@ -337,10 +416,24 @@ PanelWindow {
   // swallowed rather than reaching the app underneath: without this, Esc does
   // nothing at all while the bubble is open. Same shape as the shell's own
   // Ui/SpeedTestOverlay.qml.
+  //
+  // This Item only has focus outside input mode (the TextArea takes it there,
+  // and handles Esc itself), so Ctrl+L — open the language picker without the
+  // mouse — is bound here for the captured-text modes and in Bubble's TextArea
+  // for input mode.
   Item {
-    anchors.fill: parent
     focus: root.mode !== "input"
-    Keys.onEscapePressed: root.close()
+    anchors.fill: parent
+    Keys.onEscapePressed: {
+      if (bubble.pickerOpen) bubble.pickerOpen = false
+      else root.close()
+    }
+    Keys.onPressed: function (event) {
+      if (event.key === Qt.Key_L && (event.modifiers & Qt.ControlModifier)) {
+        event.accepted = true
+        bubble.pickerOpen = !bubble.pickerOpen
+      }
+    }
   }
 
   // Declared in the body rather than as a `property Bubble bubble: ...` so the
@@ -355,12 +448,14 @@ PanelWindow {
     translation: transport.output
     errorText: root.failureText
     directionLabel: root.directionLabel
+    targetCode: root.config.ready ? root.config.config.targetLang : ""
     copied: root.copied
     stale: root.mode === "input" && root.inputText !== root.submittedText
     onCopyRequested: root.copyTranslation()
     onCloseRequested: root.close()
     onInputChanged: root.handleInputChanged()
     onSubmitRequested: root.submitInput()
+    onTargetPicked: function (code) { root.setTargetLanguage(code) }
     // P0.2: the request was capped — say so under the result. A verbatim echo
     // that survived its retry is reported too, so it never reads as a
     // successful translation.

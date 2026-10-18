@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.4.1
+
+- Fixed: Chinese read as Portuguese in rich mode (`ALT + SHIFT + D`). That mode
+  hands in HTML converted to Markdown, so the text carries URLs, link targets,
+  code spans, file names and HTML attributes — and detection is a *density*
+  measurement, where a few foreign tokens outvote a short passage. `a` inside
+  `https://example.com` was a Portuguese stopword hit at 0.33 density, so
+  "参考 https://example.com/docs 这个页面。" scored `pt`; "运行 `npm run build`
+  即可。" scored `en` on three command words.
+- Detection now runs on a cleaned copy of the text (`Translate.stripNonLanguage`):
+  fenced and inline code, URLs, bare `www` hosts, e-mail addresses, HTML tags
+  and entities, image alt text, link targets (labels are kept), reference
+  definitions, file paths and bare file names, version numbers and hex colours.
+  Script counting uses the cleaned text too, so URL letters no longer count as
+  Latin script.
+- A passage that is *only* a URL or a code block reports Latin with no
+  language (`en`) rather than scoring the hostname's `a` as Portuguese.
+- Tests: 12 new cases (166 total) covering each stripped construct; verified by
+  mutation — bypassing the cleaning step fails 7 of them. Cost: 0.16 ms for a
+  short line, 2.5 ms for a 4.4 KB rich-mode passage.
+
+## 0.4.0
+
+Languages:
+
+- The Chinese↔English pair is gone as a hard-coded assumption. The source
+  language is detected from the text itself (`Translate.detectLang`): Unicode
+  script ranges for CJK, kana, Hangul, Cyrillic, Arabic, Thai and Devanagari,
+  then stopword density plus characteristic spelling for Latin-script
+  languages. No model call, so it costs nothing and works before the first
+  token arrives.
+- A default target language is now a setting (`targetLang` in `config.json`,
+  `""` = the built-in pair). When the configured target turns out to be the
+  detected source, the plugin falls back to the built-in pair instead of
+  "translating" into the same language.
+- The direction label in the card header is the picker: click it (or `Ctrl+L`)
+  for a row of language chips, `Auto` first. Esc closes the picker before it
+  closes the bubble. The card grows by a row or two while it is open and
+  re-measures itself; starting a translation closes it.
+- Twelve languages ship: Chinese (Simplified and Traditional), English,
+  Japanese, Korean, Spanish, French, German, Russian, Portuguese, Italian,
+  Arabic.
+- The built-in prompt now states the direction explicitly, and custom prompts
+  can interpolate `{{lang}}` / `{{source}}`. A custom prompt without
+  placeholders is appended to the built-in rules rather than replacing them,
+  so the echo guard and formatting rules still apply.
+- The direction is part of the cache key, so the same text translated into two
+  languages is no longer served from the wrong cache entry.
+- Known limit: detection is heuristic. Short Latin-script strings ("OK",
+  "Bonjour") can land on the wrong Romance/Germanic language, and mixed-script
+  text falls back to whichever script dominates. A wrong guess is correctable
+  from the picker.
+
+Tests:
+
+- 154 pure-function cases (was 107), covering detection across all twelve
+  languages, mixed text, target resolution, prompt directions and templates,
+  and the direction-aware cache key.
+- Two new offscreen render checks in `tools/test.sh`. `tests/lang-render.qml`
+  instantiates the picker chips and label; `tests/bubble-render.sh` loads the
+  real `Bubble.qml` against the installed `qs.Commons`/`qs.Ui` (only the
+  statically linked core plugin is stubbed) and asserts the card actually grows
+  when the picker opens, without exceeding `maxHeight`. Both were verified by
+  mutation: blank chips and a hidden picker each fail the corresponding check.
+
 ## 0.3.0
 
 - Tables in Markdown-rendered modes (`ALT + SHIFT + D`, `ALT + I`) now render

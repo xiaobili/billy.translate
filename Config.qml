@@ -40,6 +40,11 @@ QtObject {
       ocrLanguages: "chi_sim+eng",
       // P0.2: requests longer than this are truncated before sending.
       maxChars: 8000,
+      // The language every translation aims at, unless the source is already
+      // in it (then the built-in pair decides). Empty keeps the original
+      // behaviour: Chinese in -> English out, everything else -> Chinese.
+      // A code from Translate.js's LANGUAGES, e.g. "zh", "en", "ja".
+      targetLang: "",
       // P0.5: pick-text timing knobs, previously environment-only.
       // Precedence: explicit environment > config file > these defaults.
       preCopyDelayMs: 350,
@@ -48,7 +53,10 @@ QtObject {
     }
   }
 
-  function persistOcrDefaults() {
+  // Adds keys an older config file predates, so the user can see and edit
+  // them. Only presence is checked — a value the user deliberately left empty
+  // (targetLang "", meaning "built-in pair") is kept as it is.
+  function persistNewDefaults() {
     if (!root.dirsReady || !root.configLoaded) return
     var raw = null
     try {
@@ -57,7 +65,18 @@ QtObject {
       return
     }
     if (!raw || typeof raw !== "object") return
-    if (raw.ocrEngine === undefined || raw.ocrLanguages === undefined) root.save()
+    if (raw.ocrEngine === undefined || raw.ocrLanguages === undefined || raw.targetLang === undefined) root.save()
+  }
+
+  // Picker selection, persisted. Written through the same file `save()` uses,
+  // so the write is atomic and 0600 like the rest of the config. A code the
+  // picker does not know is still accepted — the prompt only needs the name.
+  function setTargetLang(code) {
+    var next = {}
+    for (var key in root.config) next[key] = root.config[key]
+    next.targetLang = String(code === undefined || code === null ? "" : code)
+    root.config = next
+    root.save()
   }
 
   // Anything the file does not define falls back to the default, so a config
@@ -141,7 +160,7 @@ QtObject {
       }
       root.config = root.normalize(parsed)
       root.configLoaded = true
-      root.persistOcrDefaults()
+      root.persistNewDefaults()
     }
     onLoadFailed: {
       // No file yet is the first run, not an error: seed from chat and write
