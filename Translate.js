@@ -223,6 +223,139 @@ function escapeHtmlTags(text) {
   return escapeHtmlLines(text, "", 0).text
 }
 
+// A Markdown table cannot be handed to Text.MarkdownText in this bubble.
+//
+// Qt's Markdown importer builds a QTextTable for it, and re-laying that table
+// out when the text changes again corrupts the scene graph: the next frame
+// dies in QSGBatchRenderer::Renderer::prepareAlphaBatches (SIGSEGV). It is not
+// specific to huge tables — a two-column table of 22 rows takes the shell down
+// on the first re-layout, and a streaming translation re-lays out ten times a
+// second. A single, final layout survives, which is why this only ever showed
+// up while translating.
+//
+// So tables are flattened before rendering: one list item per row, cells
+// separated by an em dash, the delimiter row dropped. The structure survives
+// (the header row becomes the first item) and MarkdownText never sees a table.
+// Rows are only recognised outside fenced code blocks, where table syntax is
+// sample text and must stay literal.
+function flattenTables(text) {
+  var lines = String(text === undefined || text === null ? "" : text).split("\n")
+  var out = []
+  var fence = ""
+  var i = 0
+  while (i < lines.length) {
+    var line = lines[i]
+    var fenceMark = line.match(/^ {0,3}(`{3,}|~{3,})/)
+    if (fenceMark) {
+      var mark = fenceMark[1]
+      var rest = line.substring(fenceMark[0].length)
+      if (fence === "") fence = mark
+      else if (mark.charAt(0) === fence.charAt(0) && mark.length >= fence.length && rest.trim() === "") fence = ""
+      out.push(line)
+      i++
+      continue
+    }
+    if (fence === "") {
+      var head = splitTableRow(line)
+      var delim = i + 1 < lines.length ? splitTableRow(lines[i + 1]) : null
+      if (head.length > 0 && delim && delim.length > 0 && isDelimiterRow(delim)) {
+        out.push(tableRowToItem(head))
+        i += 2
+        while (i < lines.length) {
+          var row = splitTableRow(lines[i])
+          if (row.length === 0) break
+          out.push(tableRowToItem(row))
+          i++
+        }
+        continue
+      }
+    }
+    out.push(line)
+    i++
+  }
+  return out.join("\n")
+}
+
+// One table line -> its cells. An empty array means "not a table row": no
+// unescaped pipe outside a code span. `\|` is an escaped pipe and stays inside
+// the cell; a pipe inside `code` is content, not a separator.
+function splitTableRow(line) {
+  var s = String(line === undefined || line === null ? "" : line)
+  var cells = []
+  var cur = ""
+  var sawPipe = false
+  var i = 0
+  var n = s.length
+  while (i < n) {
+    var ch = s.charAt(i)
+    if (ch === "\\" && s.charAt(i + 1) === "|") {
+      cur += "|"
+      i += 2
+      continue
+    }
+    if (ch === "`") {
+      var runStart = i
+      while (i < n && s.charAt(i) === "`") i++
+      var runLen = i - runStart
+      var close = -1
+      var j = i
+      while (j < n) {
+        if (s.charAt(j) === "`") {
+          var k = j
+          while (k < n && s.charAt(k) === "`") k++
+          if (k - j === runLen) { close = j; break }
+          j = k
+        } else {
+          j++
+        }
+      }
+      if (close === -1) {
+        cur += s.substring(runStart)
+        i = n
+        break
+      }
+      cur += s.substring(runStart, close + runLen)
+      i = close + runLen
+      continue
+    }
+    if (ch === "|") {
+      sawPipe = true
+      cells.push(cur)
+      cur = ""
+      i++
+      continue
+    }
+    cur += ch
+    i++
+  }
+  cells.push(cur)
+  if (!sawPipe) return []
+  // The pipes that frame the row produce an empty cell at each end.
+  if (cells.length > 1 && cells[0].trim() === "") cells.shift()
+  if (cells.length > 1 && cells[cells.length - 1].trim() === "") cells.pop()
+  var nonEmpty = false
+  for (var c = 0; c < cells.length; c++) if (cells[c].trim() !== "") nonEmpty = true
+  return nonEmpty ? cells : []
+}
+
+// The `| --- | :---: |` line that makes the line above it a header rather than
+// prose with pipes in it.
+function isDelimiterRow(cells) {
+  for (var i = 0; i < cells.length; i++) {
+    if (!/^:?-+:?$/.test(cells[i].trim())) return false
+  }
+  return true
+}
+
+function tableRowToItem(cells) {
+  var parts = []
+  for (var i = 0; i < cells.length; i++) {
+    var cell = cells[i].trim()
+    if (cell !== "") parts.push(cell)
+  }
+  return "- " + parts.join(" — ")
+}
+
 // Escape tag-shaped `<...>` outside inline code spans. A span opens with a
 // run of N backticks and closes with a run of the same length; an unmatched
 // run is literal text, not code.

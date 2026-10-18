@@ -211,4 +211,42 @@ check("an unclosed fence keeps the tail literal across chunks",
 check("state is reported back to the caller",
   escapeIncremental(["~~~\n"]).fenceChar, "~")
 
+// -------------------------------------------------------- table flattening
+// Text.MarkdownText cannot render a table here: Qt re-lays it out on the next
+// text change and the scene graph dies in prepareAlphaBatches, taking the
+// shell with it. flattenTables() turns every row into a list item so a table
+// never reaches the renderer. (See the comment on the function.)
+
+check("a row becomes a list item, the delimiter row is dropped",
+  T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n"),
+  "- a — b\n- 1 — 2\n")
+check("the header row is kept as the first item",
+  T.flattenTables("| File | Purpose |\n| --- | --- |\n| `SKILL.md` | Setup |\n"),
+  "- File — Purpose\n- `SKILL.md` — Setup\n")
+check("alignment colons are a delimiter row too",
+  T.flattenTables("h1 | h2 | h3\n:--- | :---: | ---:\n1 | 2 | 3\n"),
+  "- h1 — h2 — h3\n- 1 — 2 — 3\n")
+check("a pipe inside inline code is content, not a separator",
+  T.flattenTables("| expr | mean |\n| --- | --- |\n| `a|b` | or |\n"),
+  "- expr — mean\n- `a|b` — or\n")
+check("an escaped pipe stays inside its cell",
+  T.flattenTables("| k | v |\n| --- | --- |\n| a \\| b | both |\n"),
+  "- k — v\n- a | b — both\n")
+check("empty cells do not leave dangling separators",
+  T.flattenTables("| k | v |\n| --- | --- |\n| a | |\n"),
+  "- k — v\n- a\n")
+check("prose with a pipe and no delimiter row is left alone",
+  T.flattenTables("use a | b in shell\n"), "use a | b in shell\n")
+check("a table stop at the first line without a pipe",
+  T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n\nafter the table\n"),
+  "- a — b\n- 1 — 2\n\nafter the table\n")
+check("a table inside a fenced block stays literal",
+  T.flattenTables("```\n| a | b |\n| --- | --- |\n```\n"),
+  "```\n| a | b |\n| --- | --- |\n```\n")
+check("a partial table (header only, no delimiter yet) stays as it is",
+  T.flattenTables("| a | b |\n"), "| a | b |\n")
+check("flattening is idempotent",
+  T.flattenTables(T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n")),
+  T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n"))
+
 report()

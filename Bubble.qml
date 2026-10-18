@@ -85,51 +85,26 @@ Item {
         root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing - root.captionHeight))
     : root.selectionResultCap
 
-  // P1.9: incremental Markdown escaping. escapeHtmlTags() over the whole
-  // translation on every 100ms flush is O(stream time × text length); the
-  // transport only appends to `translation` (or resets it), so only complete
-  // new lines since the last pass go through the escaper. The trailing
-  // partial line is short and is re-escaped fresh each time without committing
-  // fence state — a fence opener that has not seen its newline yet must not
-  // flip the state early. A shrink (a new request resetting the text) resets
-  // the whole state.
-  property string _escapedTranslation: ""
-  property string _escCache: ""
-  property int _escEnd: 0
-  property string _escFenceChar: ""
-  property int _escFenceLen: 0
-
-  function escapeStreaming(raw) {
-    var r = String(raw === undefined || raw === null ? "" : raw)
-    if (!root.renderMarkdown) {
-      root._escCache = ""
-      root._escEnd = 0
-      root._escFenceChar = ""
-      root._escFenceLen = 0
-      return r
-    }
-    if (r.length < root._escEnd) {
-      root._escCache = ""
-      root._escEnd = 0
-      root._escFenceChar = ""
-      root._escFenceLen = 0
-    }
-    var end = r.lastIndexOf("\n") + 1
-    if (end > root._escEnd) {
-      var res = Translate.escapeHtmlLines(r.substring(root._escEnd, end), root._escFenceChar, root._escFenceLen)
-      root._escCache = root._escCache + res.text
-      root._escFenceChar = res.fenceChar
-      root._escFenceLen = res.fenceLen
-      root._escEnd = end
-    }
-    var tail = Translate.escapeHtmlLines(r.substring(root._escEnd), root._escFenceChar, root._escFenceLen).text
-    return root._escCache + tail
+  // What MarkdownText actually receives, for Markdown-rendered modes.
+  //
+  // Two transforms, one pass, whole text:
+  //   flattenTables()  every table becomes a list of its rows, because a real
+  //                    table in this Text kills the shell — Qt re-lays the
+  //                    QTextTable out on the next text change and the frame
+  //                    dies in prepareAlphaBatches (SIGSEGV); a streaming
+  //                    translation changes the text ten times a second.
+  //   escapeHtmlTags() tag-shaped `<...>` would be parsed and dropped.
+  //
+  // 0.2.1 escaped incrementally, caching the lines already done. Table
+  // flattening rules that out: whether a line is a row depends on the line
+  // *after* it (the `| --- |` delimiter), so a stream can rewrite a header it
+  // has already emitted and no prefix cache stays valid. The whole-text pass
+  // is cheap by comparison — 0.16 ms for a 2.3 KB answer, against text layouts
+  // that cost far more per frame.
+  readonly property string displayText: {
+    if (!root.renderMarkdown) return root.translation
+    return Translate.escapeHtmlTags(Translate.flattenTables(root.translation))
   }
-
-  // Kept outside the `text:` binding on purpose: escapeStreaming() mutates the
-  // incremental state it also reads, and doing that inside a binding would
-  // re-trigger the binding on every write.
-  onTranslationChanged: root._escapedTranslation = root.escapeStreaming(root.translation)
 
   function restoreDraft(text) {
     if (root.mode !== "input") return
@@ -394,14 +369,19 @@ Item {
           // the unescaped `translation`, so pasting keeps the original text.
           // Plain-text modes skip the escape: there is nothing to parse, and
           // `&lt;` would show up verbatim.
+          //
+          // Tables never reach MarkdownText as tables: root.displayText
+          // flattens them into list items first, because a table re-laid out
+          // on a later text change crashes the scene graph (see
+          // Translate.flattenTables).
           textFormat: root.renderMarkdown ? Text.MarkdownText : Text.PlainText
           text: {
             var bodyText
             if (root.phase === "error" && root.translation === "")
               bodyText = root.renderMarkdown ? Translate.escapeHtmlTags(root.errorText) : root.errorText
             else if (root.phase === "empty" || root.phase === "recognizing") bodyText = ""
-            else if (root.phase === "translating") bodyText = root._escapedTranslation + "▌"
-            else bodyText = root._escapedTranslation
+            else if (root.phase === "translating") bodyText = root.displayText + "▌"
+            else bodyText = root.displayText
             return bodyText
           }
           color: root.phase === "error" && root.translation === "" ? Color.urgent : Color.foreground

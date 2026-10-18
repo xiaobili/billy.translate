@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "billy.translate",
   "name": "Translate",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "author": "Billy",
   "license": "MIT",
   "description": "Translate selected text or OCR a screen region into a bubble at the cursor.",

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.2
+
+- Translating a table no longer kills the shell. `Text.MarkdownText` cannot
+  re-lay out a Markdown table: the second layout corrupts the scene graph and
+  the next frame dies in `QSGBatchRenderer::Renderer::prepareAlphaBatches`
+  (SIGSEGV). A streaming translation re-lays out every 100 ms, so any table in
+  the answer — which is exactly what a rich `ALT + SHIFT + D` capture of a
+  table produces — crashed quickshell. Tables are now flattened to a list
+  (one item per row, header first) before rendering; other Markdown is
+  unchanged. Copy still returns the original Markdown.
+- Streaming Markdown is transformed in one whole-text pass again (escape +
+  table flattening). Flattening needs the line after each line — the delimiter
+  row — so a growing stream can rewrite an already-emitted header and no
+  prefix cache stays valid. Measured cost: 0.16 ms per pass on a 2.3 KB
+  answer, against text layouts that cost far more.
+
 ## 0.2.1
 
 - A stream that comes back identical to the input (a lazy model echo) is
