@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.5.1
+
+Fix: a rich pick left the clipboard as plain text. `wl-copy` takes one MIME
+type per invocation and every invocation becomes the selection owner, so
+restoring `text/html` and then `text/plain` leaves only the plain types. The
+backup had the HTML; there was simply no way to offer it alongside the text.
+The restore now hands every captured flavour to `bin/clipboard-write`, which
+offers them all in a single selection.
+
+- `bin/clipboard-write` (new): a small `zwlr_data_control_v1` client, stdlib
+  Python only. That protocol's `set_selection` takes no serial, so owning the
+  selection needs no surface and no input focus — which is what makes this
+  possible from a script. It offers N types at once and serves `send` requests
+  until something else takes the selection. Forks into the background like
+  `wl-copy` and drops the inherited stdio, so the QML `Process` that reads
+  pick-text's stdout is not held open by the owner.
+- It re-adds `UTF8_STRING` / `STRING` / `TEXT` beside the `text/plain` payload.
+  `wl-copy` with no `--type` offered those implicitly; restoring through a
+  single `--type` would have left XWayland apps with nothing to paste.
+- A flavour whose payload is empty is skipped rather than offered: a client
+  picks the type first and only then learns there is nothing there.
+- The old wl-copy path is kept as a fallback — no `zwlr_data_control_v1`, or
+  the writer exits non-zero — so compositors without the protocol behave
+  exactly as before.
+- Two wire-level details worth recording, both found by measuring rather than
+  reading: client object ids have to start at 2 and be handed out in the order
+  the requests are sent (`wl_display.sync` must come *after* `get_registry`, or
+  its callback fires before the globals are announced), and arguments are
+  separated with `:` because a MIME type can contain `=` — `text/plain;charset=
+  utf-8` would otherwise split inside the type name.
+- Tests: 6 new cases (39 in `tests/scripts.test.sh`), verified by mutation —
+  never using the writer fails 4, offering empty flavours fails 1, handing over
+  only the first flavour fails 1, one call per flavour fails 1.
+
 ## 0.5.0
 
 New chord: `ALT + SHIFT + I` opens the same input field as `ALT + I` but

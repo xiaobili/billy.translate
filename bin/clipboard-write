@@ -1,0 +1,364 @@
+#!/usr/bin/env -S python3 -S -E
+# Offers several MIME types to the Wayland clipboard as ONE selection.
+#
+# Why this exists: wl-copy takes a single type per invocation, and every
+# invocation becomes the selection owner — it replaces the whole offer instead
+# of adding to it (verified against wl-clipboard 2.3.0; `wl-copy --type a
+# --type b` leaves only b). So a clipboard that held text/html plus text/plain
+# cannot be put back the way it was: restoring one flavour destroys the other,
+# and the plugin's rich-pick path had to settle for plain text.
+#
+# This speaks zwlr_data_control_v1 directly, which can offer any number of
+# types in a single selection. Two things make it usable where wl-copy is not:
+#   - the protocol's set_selection takes no serial, so no surface, no focus and
+#     no synthetic input event are needed to own the selection;
+#   - a source is a list of offers plus a "send" callback, so all the flavours
+#     stay available at once.
+#
+# Usage: clipboard-write [--primary] [--foreground] MIME:PATH [MIME:PATH ...]
+#
+# The separator is a colon, not the more obvious equals sign: a MIME type can
+# carry parameters of its own and "text/plain;charset=utf-8" is one of them, so
+# splitting on "=" cuts the type in half. A colon cannot appear in a type
+# (RFC 2045 tokens exclude it), so the first one is always the separator.
+#
+#   --primary      write the primary selection instead of the clipboard
+#   --foreground   stay in the foreground serving paste requests (for tests);
+#                  the default is to fork and let the parent exit like wl-copy
+#
+# Exit codes: 0 ok, 1 usage error, 2 unsupported (no Wayland display, no
+# zwlr_data_control_v1, or nothing to offer) — 2 tells the caller to fall back.
+#
+# Only the standard library is used, and the shebang skips `site` (-S/-E) for
+# the same reason bin/html-to-markdown does: that import alone measured ~120 ms.
+#
+# Protocol: wlr-data-control-unstable-v1 (zwlr_data_control_manager_v1 v2),
+# https://github.com/swaywm/wlr-protocols — the "unstable" name is historical;
+# wlroots compositors including Hyprland have shipped it for years.
+
+import os
+import socket
+import struct
+import sys
+
+EXIT_OK = 0
+EXIT_USAGE = 1
+EXIT_UNSUPPORTED = 2
+
+# Spelled out rather than reusing __doc__: the explanation above is a comment
+# block, not a docstring, so __doc__ would be None.
+USAGE = """usage: clipboard-write [--primary] [--foreground] MIME:PATH [MIME:PATH ...]
+
+Offers every given MIME type to the Wayland clipboard as one selection. Each
+PATH is read once; an empty file is skipped rather than offered.
+
+  --primary     write the primary selection instead of the clipboard
+  --foreground  serve in the foreground instead of forking into the background
+
+Exit codes: 0 ok, 1 usage error, 2 unsupported (no Wayland display, no
+zwlr_data_control_v1, or nothing to offer).
+"""
+
+# X11-era names a Wayland clipboard still has to answer to. wl-copy with no
+# --type offers these alongside text/plain, which is exactly why it is slow
+# (~90 ms: five or six offers and an xdg-mime probe). Offering them here costs
+# nothing but a few bytes in the offer list, and without them an XWayland app
+# — which asks for UTF8_STRING, not text/plain — would get nothing at all.
+LEGACY_TEXT_TYPES = (
+    "text/plain",
+    "text/plain;charset=utf-8",
+    "TEXT",
+    "STRING",
+    "UTF8_STRING",
+)
+
+# Wire format: all integers are in host byte order (little-endian here) and
+# every argument starts 4-byte aligned.
+_HDR = struct.Struct("<IHH")  # sender object id, opcode, message size
+
+
+def _u32(v):
+    return struct.pack("<I", v)
+
+
+def _string(s):
+    raw = s.encode("utf-8") + b"\0"
+    pad = b"\0" * (-len(raw) % 4)
+    return _u32(len(raw)) + raw + pad
+
+
+def _take_string(buf, off):
+    """Reads one length-prefixed string; returns (value, next offset)."""
+    (n,) = struct.unpack_from("<I", buf, off)
+    raw = buf[off + 4 : off + 4 + n]
+    return raw.split(b"\0", 1)[0].decode("utf-8", "replace"), off + 4 + ((n + 3) & ~3)
+
+
+class Wayland:
+    """A minimal Wayland client: enough to own one selection and serve it."""
+
+    def __init__(self):
+        disp = os.environ.get("WAYLAND_DISPLAY", "")
+        runtime = os.environ.get("XDG_RUNTIME_DIR", "")
+        if not disp:
+            raise OSError("WAYLAND_DISPLAY is not set")
+        path = disp if disp.startswith("/") else os.path.join(runtime, disp)
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(path)
+        # Object ids are allocated by the client, climbing from 2 (wl_display
+        # is 1). The "name" in wl_registry.global is NOT an object id — it is
+        # only an argument to wl_registry.bind, which is where the client picks
+        # the id the object will actually be known by. The two numbering spaces
+        # are unrelated, so there is no collision to avoid and no reason to
+        # reach for the high ids. (Checked against wl-copy with an LD_PRELOAD
+        # sendmsg tap: it allocates 2, 3, 4, ... and a 0xff0000xx id is
+        # rejected by the compositor as an invalid argument.)
+        self.next_id = 1
+        self.buf = b""
+        self.fds = []
+
+    def _new_id(self):
+        self.next_id += 1
+        return self.next_id
+
+    def send(self, oid, opcode, payload=b"", fds=()):
+        size = _HDR.size + len(payload)
+        msg = _HDR.pack(oid, opcode, size) + payload
+        if os.environ.get("CW_WIRE_DEBUG"):
+            sys.stderr.write("WIRE %s\n" % msg.hex())
+        if fds:
+            # fds ride in an SCM_RIGHTS ancillary message, never in the body.
+            packed = struct.pack("<%di" % len(fds), *fds)
+            self.sock.sendmsg([msg], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, packed)])
+        else:
+            self.sock.sendall(msg)
+
+    def _recv_more(self):
+        data, anc, _flags, _addr = self.sock.recvmsg(65536, socket.CMSG_SPACE(32))
+        if not data and not anc:
+            raise EOFError("compositor closed the connection")
+        for level, ctype, cdata in anc:
+            if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
+                n = len(cdata) // 4
+                self.fds.extend(struct.unpack("<%di" % n, cdata[: n * 4]))
+        self.buf += data
+
+    def read_message(self):
+        """Returns (object id, opcode, payload). Blocks until a whole message
+        is buffered; any fds that arrived land in self.fds."""
+        while True:
+            if len(self.buf) >= _HDR.size:
+                oid, opcode, size = _HDR.unpack_from(self.buf, 0)
+                if size >= _HDR.size and len(self.buf) >= size:
+                    payload = self.buf[_HDR.size : size]
+                    self.buf = self.buf[size:]
+                    return oid, opcode, payload
+            self._recv_more()
+
+    def globals(self):
+        """Binds nothing yet; returns {interface: (name, version)}."""
+        found = {}
+        # The registry's id is taken first so that it is the lowest one: the
+        # ids have to be handed out starting at 2 and in the order the requests
+        # are sent, or the compositor rejects the request outright. Allocating
+        # the callback first and then sending get_registry with the second id
+        # fails with "invalid arguments for wl_display#1.get_registry".
+        self.registry_id = self._new_id()
+        callback = self._new_id()
+        # Order matters: sync is a barrier over the requests sent BEFORE it, so
+        # it has to come last or its callback fires before the globals have been
+        # announced and the registry comes back empty.
+        self.send(1, 1, _u32(self.registry_id))  # wl_display.get_registry
+        self.send(1, 0, _u32(callback))  # wl_display.sync
+        while True:
+            oid, opcode, payload = self.read_message()
+            if oid == 1 and opcode == 0:  # wl_display.error
+                (obj,) = struct.unpack_from("<I", payload, 0)
+                (code,) = struct.unpack_from("<I", payload, 4)
+                text, _ = _take_string(payload, 8)
+                raise OSError(
+                    "compositor error: object=%u code=%u %r (raw=%s)"
+                    % (obj, code, text, payload.hex())
+                )
+            if oid == callback and opcode == 0:  # wl_callback.done
+                break
+            if oid == self.registry_id and opcode == 0:  # wl_registry.global
+                (name,) = struct.unpack_from("<I", payload, 0)
+                iface, off = _take_string(payload, 4)
+                (version,) = struct.unpack_from("<I", payload, off)
+                found[iface] = (name, version)
+        return found
+
+    def bind(self, name, iface, version, want_version):
+        oid = self._new_id()
+        payload = _u32(name) + _string(iface) + _u32(min(version, want_version))
+        self.send(self.registry_id, 0, payload + _u32(oid))  # wl_registry.bind
+        return oid
+
+
+def collect_types(args):
+    """Turns MIME=PATH arguments into [(mime, bytes)], skipping empty files.
+
+    An empty payload is skipped rather than offered: offering a type and then
+    handing over zero bytes is worse than not offering it, because the client
+    picks the type first and only then learns it is empty.
+    """
+    out = []
+    for arg in args:
+        if ":" not in arg:
+            return None
+        mime, path = arg.split(":", 1)
+        if not mime:
+            return None
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        if not data:
+            continue
+        out.append((mime, data))
+    return out
+
+
+def with_legacy_names(types):
+    """Adds the X11-era plain-text names, pointing at the same text payload."""
+    have = {mime for mime, _ in types}
+    plain = next(
+        (d for mime, d in types if mime in ("text/plain;charset=utf-8", "text/plain")),
+        None,
+    )
+    if plain is None:
+        return types
+    for name in LEGACY_TEXT_TYPES:
+        if name not in have:
+            types.append((name, plain))
+    return types
+
+
+def daemonize():
+    """Forks and exits the parent, like wl-copy's default.
+
+    The selection owner has to outlive this call: Wayland serves pastes by
+    asking whoever owns the selection, so the process must keep running until
+    something else takes over. Forking keeps that wait off the caller's
+    critical path. os._exit avoids running exit handlers in the parent, which
+    would tear down the connection the child is about to inherit.
+
+    The child also drops the inherited stdio. bin/pick-text is started from a
+    QML Process that reads its stdout, and that read only completes at EOF — a
+    child still holding the write end of the pipe would keep the reader waiting
+    for as long as it owns the selection.
+    """
+    if os.fork() != 0:
+        os._exit(EXIT_OK)
+    os.setsid()
+    devnull = os.open(os.devnull, os.O_RDWR)
+    for target in (0, 1, 2):
+        os.dup2(devnull, target)
+    if devnull > 2:
+        os.close(devnull)
+
+
+def serve(conn, source_id, device_id, by_mime):
+    """Answers 'send' requests until the selection is taken from us."""
+    while True:
+        try:
+            oid, opcode, payload = conn.read_message()
+        except (EOFError, OSError):
+            return
+        if oid == 1 and opcode == 0:  # wl_display.error
+            return
+        if oid == source_id:
+            if opcode == 0:  # send
+                mime, _ = _take_string(payload, 0)
+                fd = conn.fds.pop(0) if conn.fds else -1
+                if fd >= 0:
+                    try:
+                        _write_all(fd, by_mime.get(mime, b""))
+                    except OSError:
+                        pass
+                    finally:
+                        os.close(fd)
+            elif opcode == 1:  # cancelled: someone else owns the selection now
+                return
+        elif oid == device_id and opcode == 2:  # finished
+            return
+
+
+def _write_all(fd, data):
+    view = memoryview(data)
+    while view:
+        try:
+            written = os.write(fd, view)
+        except InterruptedError:
+            continue
+        view = view[written:]
+
+
+def main(argv):
+    primary = False
+    foreground = False
+    specs = []
+    for arg in argv:
+        if arg == "--primary":
+            primary = True
+        elif arg == "--foreground":
+            foreground = True
+        elif arg in ("-h", "--help"):
+            sys.stdout.write(USAGE)
+            return EXIT_OK
+        elif arg.startswith("-"):
+            sys.stderr.write("clipboard-write: unknown option %s\n" % arg)
+            return EXIT_USAGE
+        else:
+            specs.append(arg)
+
+    types = collect_types(specs)
+    if types is None:
+        sys.stderr.write("usage: clipboard-write MIME:PATH [MIME:PATH ...]\n")
+        return EXIT_USAGE
+    if not types:
+        return EXIT_UNSUPPORTED
+
+    types = with_legacy_names(types)
+
+    try:
+        conn = Wayland()
+    except OSError:
+        return EXIT_UNSUPPORTED
+
+    found = conn.globals()
+    manager = found.get("zwlr_data_control_manager_v1")
+    seat = found.get("wl_seat")
+    if manager is None or seat is None:
+        sys.stderr.write("clipboard-write: no zwlr_data_control_v1 on this compositor\n")
+        return EXIT_UNSUPPORTED
+
+    seat_id = conn.bind(seat[0], "wl_seat", seat[1], 2)
+    manager_id = conn.bind(
+        manager[0], "zwlr_data_control_manager_v1", manager[1], 2
+    )
+
+    source_id = conn._new_id()
+    conn.send(manager_id, 0, _u32(source_id))  # create_data_source
+    for mime, _data in types:
+        conn.send(source_id, 0, _string(mime))  # offer
+
+    device_id = conn._new_id()
+    conn.send(
+        manager_id, 1, _u32(device_id) + _u32(seat_id)
+    )  # get_data_device(new id, seat)
+    # set_selection / set_primary_selection — note: no serial argument, which
+    # is what makes this possible without a surface or input focus.
+    conn.send(device_id, 2 if primary else 0, _u32(source_id))
+
+    if not foreground:
+        daemonize()
+
+    serve(conn, source_id, device_id, dict(types))
+    return EXIT_OK
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

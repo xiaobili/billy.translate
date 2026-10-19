@@ -106,6 +106,10 @@ PRE_COPY_DELAY_MS="$(pick_num PRE_COPY_DELAY_MS preCopyDelayMs 0 5000 150)"
 WL_PASTE="${WL_PASTE:-wl-paste}"
 WL_COPY="${WL_COPY:-wl-copy}"
 WTYPE="${WTYPE:-wtype}"
+# bin/clipboard-write: restores every captured flavour in one selection.
+# Overridable so a test can stub it (or point it at /bin/false to force the
+# wl-copy fallback).
+CLIPBOARD_WRITE="${CLIPBOARD_WRITE:-$(cd "$(dirname "$0")" && pwd)/clipboard-write}"
 # Overridable for tests that stub the converter.
 HTML_TO_MARKDOWN="${HTML_TO_MARKDOWN:-$(cd "$(dirname "$0")" && pwd)/html-to-markdown}"
 
@@ -249,7 +253,33 @@ restored=0
 restore() {
   [ "$restored" -eq 1 ] && return
   restored=1
-  # Every wl-copy invocation becomes the selection owner and REPLACES the whole
+  # Preferred path: hand every captured flavour to bin/clipboard-write, which
+  # offers them all in one selection. This is the restore that actually puts
+  # the clipboard back as it was — see the fallback below for why wl-copy
+  # cannot. It forks and returns as soon as the selection is owned, so it costs
+  # no more on the critical path than the single wl-copy call it replaces.
+  #
+  # A flavour whose payload could not be read is skipped rather than offered
+  # empty: the client picks a type first and only then learns it is empty, so an
+  # empty offer is worse than no offer.
+  if [ -x "$CLIPBOARD_WRITE" ]; then
+    specs=()
+    while IFS= read -r type; do
+      [ -n "$type" ] || continue
+      safe="${type//\//_}"
+      [ -s "$backup/by-type/$safe" ] || continue
+      specs+=("$type:$backup/by-type/$safe")
+    done < "$backup/types"
+    # Non-zero means the compositor has no zwlr_data_control_v1 (or nothing was
+    # captured); either way the fallback below still has to run.
+    if [ "${#specs[@]}" -gt 0 ] && "$CLIPBOARD_WRITE" "${specs[@]}" 2>/dev/null; then
+      rm -rf "$backup"
+      return
+    fi
+  fi
+
+  # Fallback, and the whole story on compositors without zwlr_data_control_v1:
+  # every wl-copy invocation becomes the selection owner and REPLACES the whole
   # offer — it does not add to it. (Verified against wl-clipboard: writing
   # text/html then text/plain leaves only the plain types, and writing
   # image/png afterwards leaves only image/png.) So at most one of the writes

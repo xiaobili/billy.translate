@@ -270,11 +270,19 @@ bin/pick-text --html      # raw text/html, else non-zero exit
 bin/pick-text --markdown  # text/markdown, or text/html converted to Markdown
 ```
 
-**Restore limitation (unchanged):** `wl-copy` takes one type per call and each
-call becomes the selection owner, so only the flavour replayed last survives —
-and that is deliberately the text one. A rich-text clipboard therefore comes
-back as plain text after the fallback path, even though the translation itself
-saw the rich version.
+**Restore:** the clipboard comes back with every flavour it had, not just the
+text one. `wl-copy` cannot do that — it takes one type per invocation and each
+invocation becomes the selection owner, so a second write erases the first.
+`bin/clipboard-write` speaks `zwlr_data_control_v1` directly: that protocol's
+`set_selection` takes no serial (so no surface or input focus is needed) and a
+source is a list of offers, so `text/html`, the plain text and everything else
+go back in one selection. It also re-adds the X11-era names (`UTF8_STRING`,
+`STRING`, `TEXT`) beside the `text/plain` payload — `wl-copy` used to offer
+those implicitly, and an XWayland app asks for them by name.
+
+Where the compositor offers no `zwlr_data_control_v1`, or the writer fails, the
+restore falls back to the old single-flavour `wl-copy` write and the clipboard
+does come back as plain text.
 
 **Known side effect:** on that fallback path the selection may land in the
 omarchy clipboard history. The synthetic copy and its undo are separate
@@ -300,7 +308,7 @@ clipboard writes, and a clipboard watcher can observe the one in between.
 ```
 
 Covers QML syntax (`qmllint`'s `[syntax]` class only), the pure functions in
-`Layout.js` and `Translate.js` (166 cases, including language detection, the
+`Layout.js` and `Translate.js` (175 cases, including language detection, the
 non-prose stripping, target resolution and prompt directions), the `bin/`
 scripts, and two offscreen render checks:
 

@@ -233,6 +233,11 @@ check "no text is emitted on failure" "$out2" ""
 #   - a clipboard with no text flavour, where the plain payload is empty and
 #     must not be mistaken for "nothing to restore".
 #
+# These cases pin the wl-copy FALLBACK, which is now only reachable on purpose:
+# CLIPBOARD_WRITE=/bin/false below makes bin/clipboard-write fail, so the
+# assertions can see what the fallback writes. Left unset, these runs would
+# spawn the real writer and clobber the caller's clipboard instead of a stub.
+#
 # The two cases are also separated by what the restore may write. Every
 # wl-copy invocation REPLACES the clipboard offer rather than adding to it —
 # writing text/html and then text/plain leaves no text/html behind — so at most
@@ -286,6 +291,7 @@ printf '<b>before-rich</b>' > "$stub2/payload/text_html"
 
 STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
   WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
+  CLIPBOARD_WRITE=/bin/false \
   "$ROOT/bin/pick-text" >/dev/null 2>&1
 # "default" is what the wl-copy stub records for a write with no --type, i.e.
 # the text restore. Exactly one line: the text, and nothing else.
@@ -303,11 +309,110 @@ printf 'PNGDATA' > "$stub2/payload/image_png"
 
 STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
   WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
+  CLIPBOARD_WRITE=/bin/false \
   "$ROOT/bin/pick-text" >/dev/null 2>&1
 check_match "restore still replays when the clipboard holds no text" \
   "$(cat "$stub2/log")" '^image/png PNGDATA$'
 
 rm -rf "$stub2"
+
+# ------------------------------------- pick-text: the multi-type restore, stubbed
+#
+# bin/clipboard-write can put every captured flavour back in ONE selection;
+# wl-copy cannot, which is why the restore prefers it. These cases assert the
+# two properties that matter and that the real clipboard cannot show:
+#   - every captured flavour is handed over in a single call, not one call per
+#     type (which is what a wl-copy-shaped implementation would do);
+#   - nothing falls back to wl-copy when that call succeeds.
+#
+# The third case flips the writer to a failing exit and checks the fallback
+# still runs, so "prefer the writer" cannot turn into "depend on the writer".
+stub5="$(mktemp -d)"
+mkdir -p "$stub5/payload"
+
+cat > "$stub5/wl-paste" <<'STUB'
+#!/usr/bin/env bash
+d="$STUB_DIR"
+case "${1:-}" in
+  --primary) exit 1 ;;
+  --list-types) cat "$d/types"; exit 0 ;;
+  --type)
+    file="$d/payload/${2//\//_}"
+    [ -s "$file" ] && { cat "$file"; exit 0; }
+    exit 1 ;;
+  *) [ -s "$d/data" ] && { cat "$d/data"; exit 0; }; exit 1 ;;
+esac
+STUB
+
+cat > "$stub5/wl-copy" <<'STUB'
+#!/usr/bin/env bash
+printf 'wl-copy called\n' >> "$STUB_LOG_COPY"
+exit 0
+STUB
+
+cat > "$stub5/wtype" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+
+# One line per INVOCATION, arguments joined on the line: that is what lets an
+# assertion tell "two flavours in one call" (one line) apart from "one flavour
+# per call" (two lines), which is exactly the wl-copy shape being replaced.
+cat > "$stub5/clipboard-write" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_LOG_WRITE"
+exit "${STUB_WRITE_EXIT:-0}"
+STUB
+
+chmod +x "$stub5/wl-paste" "$stub5/wl-copy" "$stub5/wtype" "$stub5/clipboard-write"
+
+printf 'text/plain;charset=utf-8\ntext/html\nimage/png\n' > "$stub5/types"
+printf 'before-rich' > "$stub5/data"
+printf 'before-rich' > "$stub5/payload/text_plain;charset=utf-8"
+printf '<b>before-rich</b>' > "$stub5/payload/text_html"
+# Deliberately empty. A flavour whose payload could not be read is skipped
+# rather than offered: a client picks the type first and only then discovers it
+# is empty, so an empty offer is worse than no offer at all.
+: > "$stub5/payload/image_png"
+: > "$stub5/log-write"
+: > "$stub5/log-copy"
+
+STUB_DIR="$stub5" STUB_LOG_WRITE="$stub5/log-write" STUB_LOG_COPY="$stub5/log-copy" \
+  WL_PASTE="$stub5/wl-paste" WL_COPY="$stub5/wl-copy" WTYPE="$stub5/wtype" \
+  CLIPBOARD_WRITE="$stub5/clipboard-write" \
+  "$ROOT/bin/pick-text" >/dev/null 2>&1
+
+# The backup directory is pick-text's own mktemp, so the paths cannot be
+# written out; the flavour names and the by-type/ shape can.
+check "restore makes exactly one clipboard-write call" \
+  "$(wc -l < "$stub5/log-write" | tr -d ' ')" "1"
+check_match "that one call carries the text flavour" \
+  "$(cat "$stub5/log-write")" \
+  'text/plain;charset=utf-8:/[^ ]+/by-type/text_plain;charset=utf-8'
+check_match "that one call carries the html flavour" \
+  "$(cat "$stub5/log-write")" 'text/html:/[^ ]+/by-type/text_html'
+# Empty image/png is absent from both: a flavour whose payload could not be
+# read is skipped rather than offered, because the client picks the type first
+# and only then discovers it is empty.
+check "an empty flavour is not offered" \
+  "$(grep -c 'image/png' "$stub5/log-write")" "0"
+check "no wl-copy fallback runs when clipboard-write succeeds" \
+  "$(cat "$stub5/log-copy")" ""
+
+# Same setup, writer fails: the fallback must still put the text back.
+: > "$stub5/log-write"
+: > "$stub5/log-copy"
+
+STUB_DIR="$stub5" STUB_LOG_WRITE="$stub5/log-write" STUB_LOG_COPY="$stub5/log-copy" \
+  STUB_WRITE_EXIT=2 \
+  WL_PASTE="$stub5/wl-paste" WL_COPY="$stub5/wl-copy" WTYPE="$stub5/wtype" \
+  CLIPBOARD_WRITE="$stub5/clipboard-write" \
+  "$ROOT/bin/pick-text" >/dev/null 2>&1
+
+check_match "restore falls back to wl-copy when clipboard-write fails" \
+  "$(cat "$stub5/log-copy")" 'wl-copy called'
+
+rm -rf "$stub5"
 
 # ------------------------------- pick-text: the poll reads before it sleeps
 #
