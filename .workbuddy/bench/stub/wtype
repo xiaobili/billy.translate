@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+printf '<h1>Hello</h1><p>Some <b>bold</b> text and a <a href="https://example.com">link</a>.</p><ul><li>one</li><li>two</li></ul>' | wl-copy --type text/html

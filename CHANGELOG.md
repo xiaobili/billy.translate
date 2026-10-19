@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.5.0
+
+New chord: `ALT + SHIFT + I` opens the same input field as `ALT + I` but
+renders the answer as Markdown. `ALT + I` is now the plain one — it shows the
+translation verbatim, like `ALT + D` and `ALT + O` already did. Markdown
+rendering is opt-in per *hotkey* from now on, never inferred from the mode: the
+mode alone cannot tell the two input chords apart, and it could not tell the
+two selection chords apart either.
+
+- The input field is unchanged apart from rendering: same draft, same Enter /
+  Shift+Enter, same re-translate. Pressing the chord that is already open
+  dismisses the bubble; pressing the other input chord switches the open bubble
+  over, keeping the text in the field.
+- The request sent to the model is identical between the two input chords —
+  only the rendering differs — so switching re-renders what is already on
+  screen instead of asking again.
+- `richPick` is now `rich`: one flag for "opened through a rich chord", shared
+  by both modes, instead of a selection-only one next to a second flag for
+  input. Which combinations render Markdown lives in
+  `Translate.rendersMarkdown(mode, rich)` — a pure function, so it can be
+  asserted on directly rather than sitting in a QML binding.
+- Behaviour change worth knowing: a Markdown table typed into `ALT + I` now
+  reads as `| a | b |` instead of a drawn grid. `ALT + SHIFT + I` brings the
+  grid back.
+- Tests: 9 new cases (175 in `tests/translate.test.js`), verified by mutation —
+  restoring the old "input always renders" rule fails 3, dropping the strict
+  boolean check on `rich` fails 1, and letting `rich` into every mode fails 2.
+
+## 0.4.2
+
+Performance: `ALT + SHIFT + D` (rich pick) had roughly half a second of dead
+time between the keypress and anything happening — the surface stays hidden
+while picking, so all of it reads as lag. Profiling put every millisecond of it
+in `bin/pick-text --rich`, none in the QML or the request. Five cuts:
+
+- `preCopyDelayMs` default 350 → 150. This is the wait before synthesising
+  Ctrl+C so the hotkey's own Alt/Shift are released first; 350 was the single
+  largest item on the path and mostly padding. Releasing a chord takes tens of
+  milliseconds. Raise it again if some app still sees a modified copy.
+- The poll loop reads the clipboard *before* paying the poll interval instead
+  of after, so a copy that landed during the pre-copy delay costs no interval
+  at all.
+- `restore()` no longer replays every captured MIME type when a text payload is
+  going to be written anyway. Each `wl-copy` invocation *replaces* the whole
+  clipboard offer rather than adding to it — writing text/html and then
+  text/plain leaves no text/html behind — so those writes could only be
+  overwritten by the text write that followed. The replay still runs when there
+  is no text flavour at all, where it is the only thing that can restore
+  anything.
+- The three tuning knobs are read from `config.json` in one `jq` pass instead
+  of one pass per knob.
+- `html-to-markdown` runs python with `-S -E`. Skipping the `site` module
+  removes ~120 ms of interpreter startup, and the script imports nothing but
+  the standard library.
+
+Measured end to end, interleaved against the previous code on the same
+machine: rich path ~493 ms → ~391 ms for a copy that is ready immediately
+(the code changes alone are worth 56–89 ms at matched settings); the failure
+path where the app ignores the synthetic Ctrl+C, ~2.1 s → ~1.5 s. Absolute
+numbers on this box swing with load, which is why the comparison is
+interleaved rather than sequential.
+
+Tests: 2 new cases in `tests/scripts.test.sh` (33 total), both verified by
+mutation — reinstating the sleep-first loop fails one, reinstating the
+per-type replay fails two.
+
 ## 0.4.1
 
 - Fixed: Chinese read as Portuguese in rich mode (`ALT + SHIFT + D`). That mode

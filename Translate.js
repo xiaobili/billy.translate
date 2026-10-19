@@ -765,6 +765,24 @@ function tableRowToItem(cells) {
   return "- " + parts.join(" — ")
 }
 
+// Whether a translation is drawn as Markdown or shown verbatim.
+//
+// Markdown rendering is opt-in, never inferred: it happens when the user asked
+// for it by reaching for the *rich* variant of a hotkey — `ALT + SHIFT + D`
+// (a selection captured for its text/html flavour) or `ALT + SHIFT + I` (the
+// input field, rendered as Markdown). Everything else — `ALT + D`, `ALT + O`
+// and now `ALT + I` — shows the text as it arrived, because its `*`, `#`,
+// backticks and `<...>` are usually literal characters and MarkdownText would
+// mangle them.
+//
+// A pure function rather than a QML expression so the policy can be asserted on
+// directly: which hotkey renders how is the whole of the difference between
+// four otherwise identical paths.
+function rendersMarkdown(mode, rich) {
+  if (rich !== true) return false
+  return mode === "selection" || mode === "input"
+}
+
 // A translation cut into renderable blocks: prose that Text.MarkdownText can
 // draw, and tables that it must not (see flattenTables). One entry per block,
 // in reading order:

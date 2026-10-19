@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exit 0   # 什么都不放，模拟 app 忽略 Ctrl+C

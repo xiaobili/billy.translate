@@ -47,7 +47,10 @@ QtObject {
       targetLang: "",
       // P0.5: pick-text timing knobs, previously environment-only.
       // Precedence: explicit environment > config file > these defaults.
-      preCopyDelayMs: 350,
+      // Lowered from 350: it is dead time on every rich pick, and releasing a
+      // chord takes tens of milliseconds. Only as much as the modifier-release
+      // race actually needs — raise it if some app still sees a modified copy.
+      preCopyDelayMs: 150,
       pollAttempts: 16,
       pollIntervalMs: 25
     }

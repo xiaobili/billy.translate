@@ -22,11 +22,11 @@ Item {
   property bool stale: false
 
   property string mode: "selection"
-  // True when the selection was captured via synthetic Ctrl+C for its
-  // text/html flavour (rich mode): the translation keeps Markdown structure
-  // and the bubble renders it. Set by Overlay.qml; plain selection shares
-  // mode === "selection" but renders as plain text.
-  property bool richPick: false
+  // True when this session came from a *rich* hotkey — `ALT + SHIFT + D` or
+  // `ALT + SHIFT + I`. Set by Overlay.qml. Plain selection shares
+  // mode === "selection" with the rich one, and the input field is shared by
+  // both input hotkeys, so the mode alone cannot tell them apart: this can.
+  property bool rich: false
   property string inputText: ""
   // The target language the user picked, "" when the built-in Chinese/English
   // pair is in force (see Translate.targetLang). The picker persists it.
@@ -83,12 +83,12 @@ Item {
   readonly property int selectionGaps: sourcePreview.visible ? 3 * body.spacing : body.spacing
   readonly property int selectionResultCap: Math.min(root.maxResultHeight, Math.max(0,
       root.bodyBudget - root.headerHeight - root.sourceBlockHeight - root.selectionGaps - root.captionHeight))
-  // Markdown rendering is opt-in per mode. The input field is user-authored
-  // (deliberate Markdown is welcome) and rich mode explicitly captures
-  // formatting; plain selection and OCR text is arbitrary — its `*`, `#`,
-  // backticks and `<...>` are usually literal characters, so MarkdownText
-  // would mangle the display.
-  readonly property bool renderMarkdown: root.mode === "input" || root.richPick
+  // Markdown rendering is opt-in per hotkey, never inferred: only the two rich
+  // variants ask for it (see Translate.rendersMarkdown). Everything else —
+  // plain selection, OCR and now the plain input field — shows the text as it
+  // arrived, because its `*`, `#`, backticks and `<...>` are usually literal
+  // characters and MarkdownText would mangle the display.
+  readonly property bool renderMarkdown: Translate.rendersMarkdown(root.mode, root.rich)
   readonly property int resultCap: root.mode === "input"
     ? Math.min(root.maxResultHeight, Math.max(0,
         root.bodyBudget - root.headerHeight - root.inputHeight - 2 * body.spacing - root.captionHeight))
@@ -460,9 +460,11 @@ Item {
           id: resultText
           width: parent.width
           visible: !root.renderMarkdown
-          // Selection and OCR text is arbitrary — its `*`, `#`, backticks and
-          // `<...>` are usually literal characters, so MarkdownText would
-          // mangle the display. PlainText shows it as captured.
+          // Plain selection, OCR text and — since the plain input hotkey
+          // `ALT + I` stopped rendering Markdown — plain typed input is
+          // arbitrary: its `*`, `#`, backticks and `<...>` are usually literal
+          // characters, so MarkdownText would mangle the display. PlainText
+          // shows it as it arrived.
           textFormat: Text.PlainText
           text: {
             if (root.phase === "error" && root.translation === "") return root.errorText

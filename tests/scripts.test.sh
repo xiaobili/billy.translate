@@ -232,6 +232,15 @@ check "no text is emitted on failure" "$out2" ""
 #     the same way.
 #   - a clipboard with no text flavour, where the plain payload is empty and
 #     must not be mistaken for "nothing to restore".
+#
+# The two cases are also separated by what the restore may write. Every
+# wl-copy invocation REPLACES the clipboard offer rather than adding to it —
+# writing text/html and then text/plain leaves no text/html behind — so at most
+# one write can survive. With a text payload to put back, that write is the
+# text one, and replaying the captured types ahead of it was N spawns whose
+# result got overwritten; the replay is now skipped there. It still runs when
+# there is no text flavour at all, where it is the only thing that can restore
+# anything.
 stub2="$(mktemp -d)"
 mkdir -p "$stub2/payload"
 
@@ -278,8 +287,14 @@ printf '<b>before-rich</b>' > "$stub2/payload/text_html"
 STUB_DIR="$stub2" STUB_LOG="$stub2/log" \
   WL_PASTE="$stub2/wl-paste" WL_COPY="$stub2/wl-copy" WTYPE="$stub2/wtype" \
   "$ROOT/bin/pick-text" >/dev/null 2>&1
-check "restore replays a slash-bearing MIME type under its captured name" \
-  "$(grep -c '^text/html ' "$stub2/log")" "1"
+# "default" is what the wl-copy stub records for a write with no --type, i.e.
+# the text restore. Exactly one line: the text, and nothing else.
+check "a text clipboard is restored from its text payload" \
+  "$(cat "$stub2/log")" "default before-rich"
+# The per-type replay is skipped here on purpose — it could only be overwritten
+# by the text write. This fails if it is ever brought back.
+check "no per-type replay is issued when text will be restored" \
+  "$(grep -vc '^default ' "$stub2/log")" "0"
 
 printf 'image/png\n' > "$stub2/types"
 : > "$stub2/data"
@@ -293,6 +308,53 @@ check_match "restore still replays when the clipboard holds no text" \
   "$(cat "$stub2/log")" '^image/png PNGDATA$'
 
 rm -rf "$stub2"
+
+# ------------------------------- pick-text: the poll reads before it sleeps
+#
+# The poll loop must check the clipboard before paying the interval, or every
+# pick is charged one full interval even when the copy landed before the loop
+# was entered. Asserted by stubbing `sleep` and counting what the loop asked
+# for: the pre-copy delay is pinned to 0 and the interval to 1000, so a
+# sleep-first loop cannot avoid logging a 1.000 sleep. Counting is used rather
+# than measuring elapsed time so the check cannot flake on a loaded machine.
+stub4="$(mktemp -d)"
+printf 'before' > "$stub4/data"
+: > "$stub4/sleeps"
+
+cat > "$stub4/wl-paste" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+  --primary) exit 1 ;;
+  --list-types) printf 'text/plain\n'; exit 0 ;;
+  *) cat "$STUB_DIR/data"; exit 0 ;;
+esac
+STUB
+cat > "$stub4/wl-copy" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+STUB
+# The "app" answers the synthetic Ctrl+C immediately: the clipboard changes
+# before the poll loop runs at all.
+cat > "$stub4/wtype" <<'STUB'
+#!/usr/bin/env bash
+printf 'after' > "$STUB_DIR/data"
+STUB
+cat > "$stub4/sleep" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-}" >> "$STUB_DIR/sleeps"
+exit 0
+STUB
+chmod +x "$stub4/wl-paste" "$stub4/wl-copy" "$stub4/wtype" "$stub4/sleep"
+
+out4="$(STUB_DIR="$stub4" PATH="$stub4:$PATH" \
+  WL_PASTE="$stub4/wl-paste" WL_COPY="$stub4/wl-copy" WTYPE="$stub4/wtype" \
+  PRE_COPY_DELAY_MS=0 POLL_INTERVAL_MS=1000 PICK_DEBUG_LOG=/dev/null \
+  "$ROOT/bin/pick-text" 2>/dev/null)"
+check "a copy that is already there is picked up on the first read" "$out4" "after"
+check "the poll charges no interval when the first read already succeeds" \
+  "$(grep -c '^1\.000$' "$stub4/sleeps")" "0"
+
+rm -rf "$stub4"
 
 # --------------------------------------- pick-text: flavours and config, stubbed
 

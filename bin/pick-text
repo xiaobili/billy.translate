@@ -29,13 +29,40 @@ set -uo pipefail
 # the environment/defaults still work.
 pick_config_path="${PICK_CONFIG_PATH:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/translate/config.json}"
 
-pick_config_value() {
-  local key="$1"
-  if [ -r "$pick_config_path" ] && command -v jq >/dev/null 2>&1; then
-    jq -r --arg key "$key" '.[$key] | select(type == "number") | tostring' \
-      "$pick_config_path" 2>/dev/null || true
-  fi
+# All three knobs are read in a single jq pass rather than one pass per knob:
+# each pass is a process spawn on the hot path, and the rich hot path already
+# pays for enough of those. The result is cached as "key=value" lines for the
+# whitelist below; anything else in the config is not a tuning knob.
+pick_config_cache=""
+pick_config_load() {
+  [ -r "$pick_config_path" ] || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  pick_config_cache="$(jq -r '
+      ["pollIntervalMs", "pollAttempts", "preCopyDelayMs"] as $keys
+      | . as $c
+      | $keys[]
+      | select(($c[.] | type) == "number")
+      | "\(.)=\($c[.])"
+    ' "$pick_config_path" 2>/dev/null || true)"
 }
+
+# pick_config_value <key>: prints the cached value for one knob, or nothing.
+#
+# The cache is scanned in-shell on purpose. Resolving it with sed or grep would
+# spawn the very processes this consolidation exists to remove — one jq pass
+# plus three cheap lookups beats three jq passes.
+pick_config_value() {
+  local key="$1" line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "$key"=*) printf '%s' "${line#"$key"=}"; return 0 ;;
+    esac
+  done <<< "$pick_config_cache"
+  return 0
+}
+
+pick_config_load
 
 # pick_num <env-name> <config-key> <min> <max> <default>: integer knob with
 # clamping; non-numeric input falls back to the default rather than failing.
@@ -64,7 +91,13 @@ POLL_ATTEMPTS="$(pick_num POLL_ATTEMPTS pollAttempts 1 200 16)"
 # device is NOT fully independent of the physical modifier state. Only the
 # synthetic-copy path pays this; the primary-selection fast path never touches
 # the keyboard.
-PRE_COPY_DELAY_MS="$(pick_num PRE_COPY_DELAY_MS preCopyDelayMs 0 5000 350)"
+#
+# 150 ms, down from 350: this is dead time on every rich pick, so it is worth
+# only what the constraint actually needs. Releasing a chord takes tens of
+# milliseconds, not a third of a second — 350 was padding, and it was the single
+# largest item on the ALT+SHIFT+D path (364 ms of ~875 ms measured). Raise it
+# again (config: preCopyDelayMs) if a particular app still sees a modified copy.
+PRE_COPY_DELAY_MS="$(pick_num PRE_COPY_DELAY_MS preCopyDelayMs 0 5000 150)"
 
 # Overridable so a test can drive the restore path with stubs. The replay
 # cannot be exercised against the real clipboard: it needs a rich-text or image
@@ -216,22 +249,36 @@ restored=0
 restore() {
   [ "$restored" -eq 1 ] && return
   restored=1
-  # Types are replayed under the same sanitised name they were captured as: a
-  # MIME type contains a slash, so the file for `text/html` is `text_html`.
-  # A type whose data could not be read is skipped rather than copied empty, so
-  # one unreadable flavour cannot blank the whole clipboard.
-  while IFS= read -r type; do
-    [ -n "$type" ] || continue
-    safe="${type//\//_}"
-    if [ -s "$backup/by-type/$safe" ]; then
-      "$WL_COPY" --type "$type" < "$backup/by-type/$safe" 2>/dev/null || true
-    fi
-  done < "$backup/types"
-  # Only the last wl-copy survives: each invocation becomes the selection owner
-  # and supersedes the previous one, so the flavours above are best-effort.
-  # Text is what a text tool should leave behind and what the next paste is
-  # most likely to ask for, so it is replayed last and wins.
-  if [ -s "$backup/data" ]; then
+  # Every wl-copy invocation becomes the selection owner and REPLACES the whole
+  # offer — it does not add to it. (Verified against wl-clipboard: writing
+  # text/html then text/plain leaves only the plain types, and writing
+  # image/png afterwards leaves only image/png.) So at most one of the writes
+  # below can survive, which makes the per-type replay pointless whenever the
+  # text restore at the end runs: it would only be overwritten.
+  #
+  # It is therefore skipped in that case. Replaying N types costs N process
+  # spawns and N clipboard offers; dropping them cannot change what the user
+  # ends up with, because the text write was always going to win. The replay is
+  # kept for the other case — no text flavour at all (an image clipboard, say)
+  # — where it is the only thing that can restore anything.
+  if [ ! -s "$backup/data" ]; then
+    # Types are replayed under the same sanitised name they were captured as: a
+    # MIME type contains a slash, so the file for `text/html` is `text_html`.
+    # A type whose data could not be read is skipped rather than copied empty,
+    # so one unreadable flavour cannot blank the whole clipboard.
+    while IFS= read -r type; do
+      [ -n "$type" ] || continue
+      safe="${type//\//_}"
+      if [ -s "$backup/by-type/$safe" ]; then
+        "$WL_COPY" --type "$type" < "$backup/by-type/$safe" 2>/dev/null || true
+      fi
+    done < "$backup/types"
+  else
+    # Text is what a text tool should leave behind and what the next paste is
+    # most likely to ask for, so it wins. Written without --type so wl-copy
+    # offers the usual plain-text MIME set (text/plain, STRING, UTF8_STRING …);
+    # a single --type would leave XWayland apps, which ask for those legacy
+    # names, with nothing to paste.
     "$WL_COPY" < "$backup/data" 2>/dev/null || true
   fi
   rm -rf "$backup"
@@ -297,13 +344,18 @@ poll_attempts="$POLL_ATTEMPTS"
 [ -n "$RICH" ] && poll_attempts=$((POLL_ATTEMPTS * 2))
 after_text=""
 after_html=""
+# Read first, sleep last. The app has had the whole of PRE_COPY_DELAY_MS to
+# service the key, so on the common path the very first read already sees the
+# new content and the interval is never paid at all. Sleeping first charged
+# every caller at least one full interval — 25 ms of pure dead time — even when
+# the copy had landed before the loop was entered.
 for _ in $(seq "$poll_attempts"); do
-  sleep "$(awk -v ms="$POLL_INTERVAL_MS" 'BEGIN{printf "%.3f", ms/1000}')"
   after_text="$("$WL_PASTE" --no-newline 2>/dev/null || true)"
   after_html="$("$WL_PASTE" --type text/html 2>/dev/null || true)"
   if [ "$after_text" != "$before_text" ] || [ "$after_html" != "$before_html" ]; then
     break
   fi
+  sleep "$(awk -v ms="$POLL_INTERVAL_MS" 'BEGIN{printf "%.3f", ms/1000}')"
 done
 
 if [ "$after_text" = "$before_text" ] && [ "$after_html" = "$before_html" ]; then

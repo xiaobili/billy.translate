@@ -22,10 +22,14 @@ PanelWindow {
   // is the typed-text flow. The phase set is unchanged — input mode uses
   // empty / translating / done / error, and never picking (no probe runs).
   property string mode: "selection"
-  // True when this open() should capture via synthetic Ctrl+C instead of the
-  // primary selection, so rendered HTML previews keep their text/html flavour.
-  // Set from the open() payload; only meaningful in selection mode.
-  property bool richPick: false
+  // True when this session was opened through a *rich* hotkey — the user asked
+  // for formatting, not only for a translation. What that buys depends on the
+  // mode: in selection mode the capture goes through a synthetic Ctrl+C so a
+  // rendered HTML preview keeps its text/html flavour instead of arriving as
+  // flat plain text; in input mode there is nothing to capture, so it decides
+  // how the answer is drawn. Either way the translation renders as Markdown
+  // (Translate.rendersMarkdown); without it every mode shows text verbatim.
+  property bool rich: false
   // Bound, never assigned here: the TextArea inside Bubble.qml is the only
   // writer, so the two cannot drift. Ids are file-scoped — Bubble's own
   // `inputText` is a different property from this one.
@@ -126,6 +130,9 @@ PanelWindow {
     root.failureText = ""
     root.selectedText = ""
     root.directionLabel = ""
+    // Set before the mode branch: both modes honour it, and the input branch
+    // returns before a later assignment would be reached.
+    root.rich = payload.rich === true
     if (payload.mode === "input") {
       root.mode = "input"
       // Nothing to pick: the surface can appear at once.
@@ -146,18 +153,17 @@ PanelWindow {
       return
     }
     root.mode = payload.mode === "ocr" ? "ocr" : "selection"
-    // Rich pick skips the primary selection and synthesises Ctrl+C, so a
-    // rendered HTML preview keeps its structure (text/html -> Markdown)
-    // instead of arriving as flat plain text. Only meaningful in selection
-    // mode; input/ocr modes ignore it.
-    root.richPick = payload.rich === true && root.mode === "selection"
+    // In selection mode `rich` means a rich *pick*: skip the primary selection
+    // and synthesise Ctrl+C, so a rendered HTML preview keeps its structure
+    // (text/html -> Markdown) instead of arriving as flat plain text. In ocr
+    // mode there is no such choice and the flag does nothing.
     root.phase = "picking"
     root.pendingSubmit = false
     root.discardNextFinish = transport.streaming
     transport.cancel()
     probe.queryCursor()
     if (root.mode === "ocr") root.ocrLaunchTimer.start()
-    else if (root.richPick) probe.pickRichText()
+    else if (root.rich) probe.pickRichText()
     else probe.pickText()
   }
 
@@ -178,12 +184,27 @@ PanelWindow {
     else root.open("{}")
   }
 
+  // The input field, plain: the answer is shown as it came back. Pressing the
+  // same hotkey again dismisses it; pressing the rich one instead switches the
+  // open bubble over, because both are the same surface and the text in the
+  // field survives the switch (open() restores it from the draft).
   function inputMode() {
-    if (root.opened && root.mode === "input") {
+    if (root.opened && root.mode === "input" && !root.rich) {
       root.close()
       return
     }
     root.open('{"mode":"input"}')
+  }
+
+  // The same field, with the answer rendered as Markdown — for pasting
+  // Markdown in and reading it back rendered. Toggle semantics mirror
+  // inputMode(): the same hotkey dismisses, the other one switches.
+  function richInputMode() {
+    if (root.opened && root.mode === "input" && root.rich) {
+      root.close()
+      return
+    }
+    root.open('{"mode":"input","rich":true}')
   }
 
   function ocrMode() {
@@ -378,7 +399,7 @@ PanelWindow {
     targetLang: root.targetLang
     // P0.3: the capture mode is part of the cache key — the same words as
     // Markdown (rich) and as plain text are different requests.
-    cacheTag: root.mode + (root.richPick ? "-rich" : "")
+    cacheTag: root.mode + (root.rich ? "-rich" : "")
     // The phase stays "translating" until the stream ends — the bubble shows
     // whatever has arrived, so there is no need to promote a partial answer
     // to "done" and lose the distinction.
@@ -443,7 +464,7 @@ PanelWindow {
     placement: root.placement
     phase: root.phase
     mode: root.mode
-    richPick: root.richPick
+    rich: root.rich
     sourceText: root.selectedText
     translation: transport.output
     errorText: root.failureText
@@ -472,6 +493,7 @@ PanelWindow {
     function toggle(): void { root.toggle() }
     function copy(): void { root.copyTranslation() }
     function input(): void { root.inputMode() }
+    function richInput(): void { root.richInputMode() }
     function ocr(): void { root.ocrMode() }
     function rich(): void { root.richMode() }
     function ping(): string { return "ok" }

@@ -51,6 +51,7 @@ Third-party plugins are not enabled by default. The id has to be in
 | `ALT + SHIFT + D`       | Translate the selection **with formatting** (see below); press again to dismiss |
 | `ALT + O`               | Select a screen region, OCR it, and translate the text                     |
 | `ALT + I`               | Type or paste text to translate; Enter translates, Shift+Enter adds a line |
+| `ALT + SHIFT + I`       | The same field, with the answer **rendered as Markdown** (see below)      |
 | `Ctrl + L`              | Open/close the language picker (or click the arrow in the header)          |
 | *(unbound)*             | Copy the translation — use the bubble's copy button, or the IPC verb below |
 | `Esc`, or click outside | Close the picker first, then dismiss                                       |
@@ -62,6 +63,7 @@ o.bind("ALT + D", "Translate selection", "omarchy-shell shell toggle billy.trans
 o.bind("ALT + SHIFT + D", "Translate selection with formatting", "omarchy-shell billy.translate rich")
 o.bind("ALT + O", "Translate screenshot text", "omarchy-shell billy.translate ocr")
 o.bind("ALT + I", "Translate typing", "omarchy-shell billy.translate input")
+o.bind("ALT + SHIFT + I", "Translate typing with formatting", "omarchy-shell billy.translate richInput")
 -- Copy has no chord on this machine: use the bubble's copy button,
 -- or `omarchy-shell billy.translate copy`.
 ```
@@ -97,6 +99,13 @@ selection. Enter translates, Shift+Enter adds a line, and editing the text and
 pressing Enter again re-translates — the request in flight is cancelled first.
 A result whose text you have since changed is dimmed, so an old translation
 never reads as the current one.
+
+`ALT + SHIFT + I` opens the same field and renders the answer as Markdown —
+for pasting Markdown in and reading it back formatted. The two chords differ
+*only* in rendering: the request sent to the model is identical, so switching
+between them re-renders what is already on screen without asking again. Pressing
+the chord that is already open dismisses the bubble; pressing the other one
+switches the open bubble over, keeping the text in the field.
 
 No cursor query runs in input mode, so the bubble opens where the cursor was
 last queried — wherever the pointer was for the last `ALT + D`, or centred on
@@ -198,15 +207,19 @@ a 0600 config file, because `/proc/<pid>/cmdline` is world-readable.
 
 ## Markdown rendering
 
-Whether the translation bubble renders Markdown depends on the mode. The
-input field (`ALT + I`) is user-authored, so deliberate Markdown is welcome
-there, and the rich-selection path (`ALT + SHIFT + D`) explicitly captures
-formatting — both render Markdown (`Text.MarkdownText`): headings, lists,
-bold/italic, links, inline code and code blocks from the translation appear
-formatted, while plain text without Markdown syntax renders unchanged.
-Selection (`ALT + D`) and OCR (`ALT + O`) translations render as plain text:
-their `*`, `#`, backticks and `<...>` are usually literal characters, and
-Markdown rendering would mangle the display.
+Whether the translation bubble renders Markdown depends on **the hotkey**, not
+on the mode: only the two rich chords ask for it — `ALT + SHIFT + D`, which
+captures the selection for its text/html flavour, and `ALT + SHIFT + I`, which
+renders what you typed. Both render Markdown (`Text.MarkdownText`): headings,
+lists, bold/italic, links, inline code and code blocks from the translation
+appear formatted, while plain text without Markdown syntax renders unchanged.
+
+Everything else renders as plain text — `ALT + D`, `ALT + O`, and now
+`ALT + I`. Their `*`, `#`, backticks and `<...>` are usually literal
+characters, and Markdown rendering would mangle the display. Note the
+consequence for the input field: `ALT + I` shows the answer verbatim, so a
+Markdown table in it reads as `| a | b |` rather than as a drawn grid. Use
+`ALT + SHIFT + I` when you want the formatting back.
 
 Angle-bracket sequences shaped like HTML tags (`List<String>`, `<name>`) are
 escaped before Markdown rendering so they display literally instead of being

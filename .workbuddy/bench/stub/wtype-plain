@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+printf 'Hello\nSome bold text and a link.\n' | wl-copy

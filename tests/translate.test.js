@@ -403,6 +403,35 @@ check("flattening is idempotent",
   T.flattenTables(T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n")),
   T.flattenTables("| a | b |\n| --- | --- |\n| 1 | 2 |\n"))
 
+// ------------------------------------------------------------ render mode
+// Which hotkey renders Markdown is the entire difference between four
+// otherwise identical paths, so it is asserted directly instead of living in a
+// QML binding nobody can test: the two rich hotkeys render, everything else —
+// including `ALT + I`, which used to render — shows the text verbatim.
+
+check("plain selection shows the text verbatim",
+  T.rendersMarkdown("selection", false), false)
+check("plain typing shows the text verbatim",
+  T.rendersMarkdown("input", false), false)
+check("OCR never renders Markdown",
+  T.rendersMarkdown("ocr", false), false)
+check("rich selection renders Markdown",
+  T.rendersMarkdown("selection", true), true)
+check("rich typing renders Markdown",
+  T.rendersMarkdown("input", true), true)
+// A rich flag that arrived on a mode with no rich variant must not leak into
+// it: OCR has nothing to capture and no Markdown to preserve.
+check("rich is not carried into OCR",
+  T.rendersMarkdown("ocr", true), false)
+check("an unknown mode does not render",
+  T.rendersMarkdown("other", true), false)
+// QML hands in `undefined` when a property was never assigned, and `1` from a
+// loose payload; only a real boolean true is a request to render.
+check("a missing rich flag is not truthy",
+  T.rendersMarkdown("input", undefined), false)
+check("a truthy but non-boolean rich flag is refused",
+  T.rendersMarkdown("input", 1), false)
+
 // ----------------------------------------------------------- block split
 // The bubble renders prose and tables as separate items (Table.qml draws the
 // grid), so splitBlocks() is the boundary the crash cannot cross: whatever it
